@@ -62,7 +62,7 @@ def register_socket_events(socketio):
             join_room(room)
             
             # 记录客户端与任务的关联
-            client_id = socketio.server.eio.sockets[0]
+            client_id = request.sid  # 使用请求的会话ID作为客户端ID
             if task_id not in task_clients:
                 task_clients[task_id] = []
             if client_id not in task_clients[task_id]:
@@ -92,7 +92,7 @@ def register_socket_events(socketio):
             leave_room(room)
             
             # 移除客户端与任务的关联
-            client_id = socketio.server.eio.sockets[0]
+            client_id = request.sid  # 使用请求的会话ID作为客户端ID
             if task_id in task_clients and client_id in task_clients[task_id]:
                 task_clients[task_id].remove(client_id)
                 # 如果任务没有客户端了，清理

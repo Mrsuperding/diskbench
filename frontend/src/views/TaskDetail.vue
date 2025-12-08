@@ -712,9 +712,13 @@ export default {
 
     // 初始化WebSocket连接
     const initWebSocket = () => {
+      console.log("初始化WebSocket连接，任务ID:", taskId.value);
       // 创建WebSocket连接
-      socket.value = io("http://localhost:5000", {
+      socket.value = io("http://localhost:5001", {
         transports: ["websocket"],
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
       });
 
       // 连接成功
@@ -727,30 +731,114 @@ export default {
       // 接收任务日志
       socket.value.on("task_log", (data) => {
         console.log("收到任务日志:", data);
-        const logContent = data.log;
-        if (logContent) {
-          // 如果是多条日志，分割后添加
-          const logLines = logContent.split("\n");
-          logLines.forEach((line) => {
-            if (line.trim()) {
+        if (data && typeof data === 'object') {
+          if (data.log) {
+            // 如果是字符串类型的日志
+            const logContent = data.log;
+            if (typeof logContent === 'string') {
+              // 如果是多条日志，分割后添加
+              const logLines = logContent.split("\n");
+              logLines.forEach((line) => {
+                if (line.trim()) {
+                  logs.value.push({
+                    id: logId++,
+                    timestamp: new Date().toLocaleString(),
+                    content: line.trim(),
+                  });
+                  console.log("添加日志:", line.trim());
+                }
+              });
+            } else if (typeof logContent === 'object') {
+              // 如果是对象类型的日志
               logs.value.push({
                 id: logId++,
                 timestamp: new Date().toLocaleString(),
-                content: line.trim(),
+                content: JSON.stringify(logContent),
               });
             }
+          } else {
+            // 如果直接是日志内容
+            logs.value.push({
+              id: logId++,
+              timestamp: new Date().toLocaleString(),
+              content: JSON.stringify(data),
+            });
+          }
+        } else if (typeof data === 'string') {
+          // 如果直接是字符串
+          logs.value.push({
+            id: logId++,
+            timestamp: new Date().toLocaleString(),
+            content: data,
           });
         }
       });
 
-      // 错误处理
-      socket.value.on("error", (error) => {
-        console.error("WebSocket错误:", error);
+      // 接收连接响应
+      socket.value.on("connect_response", (data) => {
+        console.log("连接响应:", data);
       });
 
-      // 连接断开
-      socket.value.on("disconnect", () => {
-        console.log("WebSocket连接断开");
+      // 接收加入房间响应
+      socket.value.on("join_room_response", (data) => {
+        console.log("加入房间响应:", data);
+        logs.value.push({
+          id: logId++,
+          timestamp: new Date().toLocaleString(),
+          content: `已加入任务日志房间: ${data.message}`,
+        });
+      });
+
+      // 接收错误
+      socket.value.on("error", (error) => {
+        console.error("WebSocket错误:", error);
+        logs.value.push({
+          id: logId++,
+          timestamp: new Date().toLocaleString(),
+          content: `WebSocket错误: ${JSON.stringify(error)}`,
+        });
+      });
+
+      // 接收连接断开
+      socket.value.on("disconnect", (reason) => {
+        console.log("WebSocket连接断开:", reason);
+        logs.value.push({
+          id: logId++,
+          timestamp: new Date().toLocaleString(),
+          content: `WebSocket连接断开: ${reason}`,
+        });
+      });
+
+      // 接收重连尝试
+      socket.value.on("reconnect_attempt", (attempt) => {
+        console.log(`WebSocket重连尝试 ${attempt}`);
+        logs.value.push({
+          id: logId++,
+          timestamp: new Date().toLocaleString(),
+          content: `WebSocket重连尝试 ${attempt}`,
+        });
+      });
+
+      // 接收重连成功
+      socket.value.on("reconnect", (attempt) => {
+        console.log(`WebSocket重连成功，尝试次数: ${attempt}`);
+        logs.value.push({
+          id: logId++,
+          timestamp: new Date().toLocaleString(),
+          content: `WebSocket重连成功，尝试次数: ${attempt}`,
+        });
+        // 重新加入任务日志房间
+        socket.value.emit("join_task_room", { task_id: taskId.value });
+      });
+
+      // 接收重连失败
+      socket.value.on("reconnect_failed", () => {
+        console.error("WebSocket重连失败");
+        logs.value.push({
+          id: logId++,
+          timestamp: new Date().toLocaleString(),
+          content: "WebSocket重连失败",
+        });
       });
     };
 

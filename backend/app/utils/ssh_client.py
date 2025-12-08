@@ -210,86 +210,153 @@ class SSHClient:
     
     def run_fio_test(self, fio_params, working_dir='/tmp'):
         """运行fio测试"""
-        # 直接处理原始参数，不进行预处理，确保转换逻辑被正确执行
-        # 构建fio命令
-        cmd_parts = ['fio']
+        # 定义fio支持的核心参数列表
+        fio_supported_params = [
+            'rw', 'blocksize', 'iodepth', 'filename', 'size', 'runtime', 'numjobs', 
+            'iodepth_batch_submit', 'iodepth_batch_complete', 'rwmixread', 'rwmixwrite', 
+            'bs', 'ioengine', 'direct', 'sync', 'norandommap', 'randrepeat', 'group_reporting', 
+            'name', 'output', 'stonewall', 'overwrite'
+        ]
         
-        # 处理fio参数，转换错误的参数名
-        for key, value in fio_params.items():
-            # 转换io_type为正确的rw参数
-            if key == 'io_type':
-                cmd_parts.append(f'--rw={value}')
-            # 转换block_size为正确的blocksize参数
-            elif key == 'block_size':
-                cmd_parts.append(f'--blocksize={value}')
-            # 转换queue_depth为正确的iodepth参数
-            elif key == 'queue_depth':
-                # 如果值包含逗号，逐个执行测试
-                if isinstance(value, str) and ',' in value:
-                    # 分割多个值
-                    values = value.split(',')
-                    all_results = []
-                    
-                    for val in values:
-                        # 构建当前值的fio命令
-                        single_cmd_parts = ['fio']
-                        for k, v in fio_params.items():
-                            if k == 'queue_depth':
-                                single_cmd_parts.append(f'--iodepth={val.strip()}')
-                            elif k == 'io_type':
-                                single_cmd_parts.append(f'--rw={v}')
-                            elif k == 'block_size':
-                                single_cmd_parts.append(f'--blocksize={v}')
-                            elif k == 'partitions':
-                                continue
-                            else:
-                                single_cmd_parts.append(f'--{k}={v}')
-                        
-                        command = ' '.join(single_cmd_parts)
-                        
-                        # 切换到工作目录
-                        if working_dir:
-                            command = f'cd {working_dir} && {command}'
-                        
-                        # 执行fio命令
-                        success, output = self.execute_command(command, timeout=3600)  # 1小时超时
-                        
-                        all_results.append({
-                            'success': success,
-                            'raw_output': output,
-                            'parsed_output': self._parse_fio_output(output) if success else None,
-                            'params': {'iodepth': val.strip()}
-                        })
-                    
-                    # 返回所有测试结果的合并结果
-                    return {
-                        'success': all(r['success'] for r in all_results),
-                        'raw_output': '\n\n'.join(r['raw_output'] for r in all_results),
-                        'parsed_output': all_results
-                    }
-                else:
-                    cmd_parts.append(f'--iodepth={value}')
-            # 跳过partitions参数，分区信息应该从节点信息中获取
-            elif key == 'partitions':
-                continue
-            else:
-                cmd_parts.append(f'--{key}={value}')
-        
-        command = ' '.join(cmd_parts)
-        
-        # 切换到工作目录
-        if working_dir:
-            command = f'cd {working_dir} && {command}'
-        
-        # 执行fio命令
-        success, output = self.execute_command(command, timeout=3600)  # 1小时超时
-        
-        # 返回统一格式的结果
-        return {
-            'success': success,
-            'raw_output': output,
-            'parsed_output': self._parse_fio_output(output) if success else None
+        # 定义参数转换映射
+        param_mapping = {
+            'io_type': 'rw',
+            'block_size': 'blocksize',
+            'queue_depth': 'iodepth'
         }
+        
+        # 处理read_write_ratio参数的辅助函数
+        def process_read_write_ratio(ratio_value):
+            try:
+                if isinstance(ratio_value, str):
+                    if ':' in ratio_value:
+                        read_ratio_str, _ = ratio_value.split(':')
+                        read_ratio = int(read_ratio_str.strip())
+                    else:
+                        read_ratio = int(ratio_value.strip())
+                else:
+                    read_ratio = int(ratio_value)
+                return max(0, min(100, read_ratio))
+            except (ValueError, TypeError):
+                return None
+        
+        # 构建fio命令的辅助函数
+        def build_cmd_parts(params, current_iodepth=None):
+            parts = ['fio']
+            
+            # 添加默认作业名称
+            parts.append('--name=diskbench_test')
+            
+            # 处理读写比例参数
+            ratio = process_read_write_ratio(params.get('read_write_ratio'))
+            if ratio is not None:
+                parts.append(f'--rwmixread={ratio}')
+            
+            # 处理用户定义的参数
+            for key, value in params.items():
+                # 跳过无效参数
+                if key in ['template_id', 'partitions', 'read_write_ratio']:
+                    continue
+                
+                # 转换参数名
+                mapped_key = param_mapping.get(key, key)
+                
+                # 获取当前值
+                if key == 'queue_depth' and current_iodepth is not None:
+                    val = current_iodepth.strip()
+                else:
+                    val = value
+                
+                # 转换为字符串
+                if isinstance(val, bool):
+                    val = '1' if val else '0'
+                elif not isinstance(val, str):
+                    val = str(val).strip()
+                else:
+                    val = val.strip()
+                
+                # 跳过空值
+                if not val:
+                    continue
+                
+                # 如果是支持的参数，使用--key=value格式
+                if mapped_key in fio_supported_params:
+                    parts.append(f'--{mapped_key}={val}')
+                else:
+                    # 否则作为自定义参数直接添加到命令末尾
+                    parts.append(f'--{mapped_key}={val}')
+            
+            # 确保包含必要的参数
+            # 添加默认numjobs=1（如果用户未指定）
+            if not any('--numjobs=' in part for part in parts):
+                parts.append('--numjobs=1')
+            
+            # 添加默认runtime=30（如果用户未指定）
+            if not any('--runtime=' in part for part in parts):
+                parts.append('--runtime=30')
+            
+            # 添加默认group_reporting（如果用户未指定）
+            if not any('--group_reporting' in part for part in parts):
+                parts.append('--group_reporting')
+            
+            return parts
+        
+        # 检查queue_depth是否需要特殊处理
+        queue_depth = fio_params.get('queue_depth')
+        if queue_depth and isinstance(queue_depth, str) and ',' in queue_depth:
+            # 处理多个queue_depth值
+            queue_depths = queue_depth.split(',')
+            all_results = []
+            
+            for qd in queue_depths:
+                qd = qd.strip()
+                if not qd:
+                    continue
+                
+                # 构建当前值的fio命令
+                single_cmd_parts = build_cmd_parts(fio_params, current_iodepth=qd)
+                
+                command = ' '.join(single_cmd_parts)
+                
+                # 切换到工作目录
+                if working_dir:
+                    command = f'cd {working_dir} && {command}'
+                
+                # 执行fio命令
+                success, output = self.execute_command(command, timeout=3600)  # 1小时超时
+                
+                all_results.append({
+                    'success': success,
+                    'raw_output': output,
+                    'parsed_output': self._parse_fio_output(output) if success else None,
+                    'params': {'iodepth': qd}
+                })
+            
+            # 返回所有测试结果的合并结果
+            return {
+                'success': all(r['success'] for r in all_results),
+                'raw_output': '\n\n'.join(r['raw_output'] for r in all_results),
+                'parsed_output': all_results
+            }
+        else:
+            # 处理单个queue_depth值
+            cmd_parts = build_cmd_parts(fio_params)
+            
+            command = ' '.join(cmd_parts)
+            
+            # 切换到工作目录
+            if working_dir:
+                command = f'cd {working_dir} && {command}'
+            
+            # 执行fio命令
+            success, output = self.execute_command(command, timeout=3600)  # 1小时超时
+            
+            # 返回统一格式的结果
+            return {
+                'success': success,
+                'raw_output': output,
+                'parsed_output': self._parse_fio_output(output) if success else None
+            }
     
     def _parse_fio_output(self, output):
         """解析fio输出结果"""
