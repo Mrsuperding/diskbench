@@ -223,7 +223,7 @@
             <el-card shadow="hover">
               <template #header>
                 <div class="card-header">
-                  <span>IO模型性能对比</span>
+                  <span>IO性能抖动图表</span>
                   <el-select
                     v-model="selectedIOModels"
                     placeholder="选择IO模型"
@@ -240,10 +240,20 @@
                 </div>
               </template>
               <div class="chart-container">
-                <!-- 这里将放置性能图表组件 -->
-                <div class="placeholder-chart">
-                  <el-empty description="请选择IO模型查看性能图表"></el-empty>
+                <!-- 性能抖动图表 -->
+                <div ref="ioJitterChart" class="performance-chart"></div>
+              </div>
+            </el-card>
+            
+            <el-card shadow="hover" style="margin-top: 20px;">
+              <template #header>
+                <div class="card-header">
+                  <span>IOPS性能对比</span>
                 </div>
+              </template>
+              <div class="chart-container">
+                <!-- IOPS对比图表 -->
+                <div ref="iopsChart" class="performance-chart"></div>
               </div>
             </el-card>
           </div>
@@ -1503,7 +1513,293 @@ export default {
 
     // 性能图表相关
     const selectedIOModels = ref([]);
-    const chartRef = ref(null);
+    const ioJitterChartRef = ref(null);
+    const iopsChartRef = ref(null);
+    let ioJitterChart = null;
+    let iopsChart = null;
+    
+    // 初始化IO性能抖动图表
+    const initIOJitterChart = () => {
+      if (ioJitterChartRef.value) {
+        ioJitterChart = echarts.init(ioJitterChartRef.value);
+        
+        const option = {
+          title: {
+            text: 'IO性能抖动图',
+            left: 'center'
+          },
+          tooltip: {
+            trigger: 'axis'
+          },
+          legend: {
+            data: ['读IOPS', '写IOPS', '总IOPS'],
+            bottom: 0
+          },
+          grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '15%',
+            containLabel: true
+          },
+          xAxis: {
+            type: 'category',
+            boundaryGap: false,
+            data: [],
+            name: '时间'
+          },
+          yAxis: {
+            type: 'value',
+            name: 'IOPS'
+          },
+          series: [
+            {
+              name: '读IOPS',
+              type: 'line',
+              data: [],
+              smooth: true,
+              lineStyle: {
+                color: '#5470c6'
+              },
+              areaStyle: {
+                color: {
+                  type: 'linear',
+                  x: 0,
+                  y: 0,
+                  x2: 0,
+                  y2: 1,
+                  colorStops: [{
+                    offset: 0, color: 'rgba(84, 112, 198, 0.5)'
+                  }, {
+                    offset: 1, color: 'rgba(84, 112, 198, 0.1)'
+                  }]
+                }
+              }
+            },
+            {
+              name: '写IOPS',
+              type: 'line',
+              data: [],
+              smooth: true,
+              lineStyle: {
+                color: '#91cc75'
+              },
+              areaStyle: {
+                color: {
+                  type: 'linear',
+                  x: 0,
+                  y: 0,
+                  x2: 0,
+                  y2: 1,
+                  colorStops: [{
+                    offset: 0, color: 'rgba(145, 204, 117, 0.5)'
+                  }, {
+                    offset: 1, color: 'rgba(145, 204, 117, 0.1)'
+                  }]
+                }
+              }
+            },
+            {
+              name: '总IOPS',
+              type: 'line',
+              data: [],
+              smooth: true,
+              lineStyle: {
+                color: '#fac858'
+              },
+              areaStyle: {
+                color: {
+                  type: 'linear',
+                  x: 0,
+                  y: 0,
+                  x2: 0,
+                  y2: 1,
+                  colorStops: [{
+                    offset: 0, color: 'rgba(250, 200, 88, 0.5)'
+                  }, {
+                    offset: 1, color: 'rgba(250, 200, 88, 0.1)'
+                  }]
+                }
+              }
+            }
+          ]
+        };
+        
+        ioJitterChart.setOption(option);
+        
+        // 监听窗口大小变化，自适应调整图表大小
+        window.addEventListener('resize', () => {
+          ioJitterChart.resize();
+        });
+      }
+    };
+    
+    // 初始化IOPS对比图表
+    const initIOPSChart = () => {
+      if (iopsChartRef.value) {
+        iopsChart = echarts.init(iopsChartRef.value);
+        
+        const option = {
+          title: {
+            text: 'IOPS性能对比',
+            left: 'center'
+          },
+          tooltip: {
+            trigger: 'axis',
+            axisPointer: {
+              type: 'shadow'
+            }
+          },
+          legend: {
+            data: ['最大IOPS', '平均IOPS', '最小IOPS'],
+            bottom: 0
+          },
+          grid: {
+            left: '3%',
+            right: '4%',
+            bottom: '15%',
+            containLabel: true
+          },
+          xAxis: {
+            type: 'category',
+            data: [],
+            name: 'IO模型'
+          },
+          yAxis: {
+            type: 'value',
+            name: 'IOPS'
+          },
+          series: [
+            {
+              name: '最大IOPS',
+              type: 'bar',
+              data: [],
+              itemStyle: {
+                color: '#5470c6'
+              }
+            },
+            {
+              name: '平均IOPS',
+              type: 'bar',
+              data: [],
+              itemStyle: {
+                color: '#91cc75'
+              }
+            },
+            {
+              name: '最小IOPS',
+              type: 'bar',
+              data: [],
+              itemStyle: {
+                color: '#fac858'
+              }
+            }
+          ]
+        };
+        
+        iopsChart.setOption(option);
+        
+        // 监听窗口大小变化，自适应调整图表大小
+        window.addEventListener('resize', () => {
+          iopsChart.resize();
+        });
+      }
+    };
+    
+    // 更新IO性能抖动图表数据
+    const updateIOJitterChart = () => {
+      if (ioJitterChart) {
+        // 模拟数据，实际应该从后端获取iostat数据
+        const timeData = [];
+        const readIOPS = [];
+        const writeIOPS = [];
+        const totalIOPS = [];
+        
+        // 生成过去60秒的数据
+        for (let i = 60; i >= 0; i--) {
+          const time = new Date(Date.now() - i * 1000);
+          timeData.push(time.toLocaleTimeString());
+          
+          // 生成随机IOPS数据
+          const read = Math.floor(Math.random() * 1000) + 500;
+          const write = Math.floor(Math.random() * 800) + 300;
+          readIOPS.push(read);
+          writeIOPS.push(write);
+          totalIOPS.push(read + write);
+        }
+        
+        ioJitterChart.setOption({
+          xAxis: {
+            data: timeData
+          },
+          series: [
+            {
+              data: readIOPS
+            },
+            {
+              data: writeIOPS
+            },
+            {
+              data: totalIOPS
+            }
+          ]
+        });
+      }
+    };
+    
+    // 更新IOPS对比图表数据
+    const updateIOPSChart = () => {
+      if (iopsChart && selectedIOModels.value.length > 0) {
+        const ioModelNames = selectedIOModels.value.map(id => {
+          const task = ioTasks.value.find(t => t.id === id);
+          return task ? task.name : `IO模型${id}`;
+        });
+        
+        const maxIOPS = [];
+        const avgIOPS = [];
+        const minIOPS = [];
+        
+        // 为每个选中的IO模型生成随机数据
+        selectedIOModels.value.forEach(() => {
+          const max = Math.floor(Math.random() * 2000) + 1000;
+          const min = Math.floor(Math.random() * 800) + 300;
+          const avg = Math.floor((max + min) / 2);
+          
+          maxIOPS.push(max);
+          avgIOPS.push(avg);
+          minIOPS.push(min);
+        });
+        
+        iopsChart.setOption({
+          xAxis: {
+            data: ioModelNames
+          },
+          series: [
+            {
+              data: maxIOPS
+            },
+            {
+              data: avgIOPS
+            },
+            {
+              data: minIOPS
+            }
+          ]
+        });
+      }
+    };
+    
+    // 监听选中IO模型变化，更新图表
+    watch(selectedIOModels, () => {
+      updateIOPSChart();
+    }, { deep: true });
+    
+    // 组件挂载后初始化图表
+    onMounted(() => {
+      initIOJitterChart();
+      initIOPSChart();
+      // 模拟数据更新
+      updateIOJitterChart();
+    });
 
     return {
       taskDetail,
@@ -1563,7 +1859,9 @@ export default {
       selectedIOModels,
       showDetailedDataDialog,
       showResultDetails,
-      chartRef,
+      // 图表相关
+      ioJitterChartRef,
+      iopsChartRef,
     };
   },
 };
