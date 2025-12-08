@@ -1,0 +1,69 @@
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 编辑器目录和文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 编译输出
+*.pyc
+__pycache__/
+*.o
+*.a
+*.so
+
+# 数据库文件
+*.db
+*.sqlite
+*.sqlite3
+
+# 环境变量文件
+.env
+.env.local
+.env.*.local
+
+# 日志文件
+*.log
+logs/
+log/
+
+# 虚拟环境
+venv/
+env/
+ENV/
+.env/
+
+# Node.js依赖
+node_modules/
+
+# 前端构建输出
+dist/
+build/
+
+# 临时文件
+*.tmp
+*.temp
+.cache/
+
+# 密码和密钥文件
+*.key
+*.pem
+*.cert
+
+# Windows系统文件
+Thumbs.db
+*.lnk
+
+# 测试文件
+*.test.js
+*.spec.js
+coverage/
+
+# 部署文件
+deploy.sh
+*.zip
+*.tar.gz

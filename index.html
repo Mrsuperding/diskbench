@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IO性能测试平台 - 专业存储性能测试解决方案</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        /* Header */
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        .nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 0;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+
+        .logo i {
+            margin-right: 0.5rem;
+            color: #3498db;
+        }
+
+        .nav-links {
+            display: flex;
+            list-style: none;
+            gap: 2rem;
+        }
+
+        .nav-links a {
+            text-decoration: none;
+            color: #2c3e50;
+            font-weight: 500;
+            transition: color 0.3s;
+        }
+
+        .nav-links a:hover {
+            color: #3498db;
+        }
+
+        /* Hero Section */
+        .hero {
+            padding: 4rem 0;
+            text-align: center;
+            color: white;
+        }
+
+        .hero h1 {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            font-weight: 700;
+        }
+
+        .hero p {
+            font-size: 1.2rem;
+            margin-bottom: 2rem;
+            opacity: 0.9;
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: 500;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+
+        .btn-primary {
+            background: #3498db;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #2980b9;
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+
+        /* Features Section */
+        .features {
+            padding: 4rem 0;
+            background: white;
+        }
+
+        .section-title {
+            text-align: center;
+            font-size: 2.5rem;
+            margin-bottom: 3rem;
+            color: #2c3e50;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-bottom: 3rem;
+        }
+
+        .feature-card {
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            transition: transform 0.3s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .feature-icon {
+            font-size: 3rem;
+            color: #3498db;
+            margin-bottom: 1rem;
+        }
+
+        .feature-card h3 {
+            font-size: 1.3rem;
+            margin-bottom: 1rem;
+            color: #2c3e50;
+        }
+
+        .feature-card p {
+            color: #7f8c8d;
+            line-height: 1.6;
+        }
+
+        /* Tech Stack */
+        .tech-stack {
+            padding: 4rem 0;
+            background: #f8f9fa;
+        }
+
+        .tech-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+
+        .tech-category {
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        .tech-category h3 {
+            color: #2c3e50;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .tech-list {
+            list-style: none;
+        }
+
+        .tech-list li {
+            padding: 0.5rem 0;
+            color: #7f8c8d;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .tech-list li i {
+            color: #3498db;
+            width: 20px;
+        }
+
+        /* Documentation */
+        .documentation {
+            padding: 4rem 0;
+            background: white;
+        }
+
+        .docs-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-top: 2rem;
+        }
+
+        .doc-card {
+            background: #f8f9fa;
+            padding: 2rem;
+            border-radius: 12px;
+            border-left: 4px solid #3498db;
+            transition: all 0.3s;
+        }
+
+        .doc-card:hover {
+            background: white;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            transform: translateY(-2px);
+        }
+
+        .doc-card h3 {
+            color: #2c3e50;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .doc-card p {
+            color: #7f8c8d;
+            margin-bottom: 1rem;
+        }
+
+        .doc-link {
+            color: #3498db;
+            text-decoration: none;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .doc-link:hover {
+            text-decoration: underline;
+        }
+
+        /* Footer */
+        .footer {
+            background: #2c3e50;
+            color: white;
+            padding: 2rem 0;
+            text-align: center;
+        }
+
+        .footer p {
+            margin-bottom: 0.5rem;
+        }
+
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin-top: 1rem;
+        }
+
+        .footer-links a {
+            color: #bdc3c7;
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+
+        .footer-links a:hover {
+            color: white;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2rem;
+            }
+            
+            .hero p {
+                font-size: 1rem;
+            }
+            
+            .nav-links {
+                display: none;
+            }
+            
+            .cta-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .section-title {
+                font-size: 2rem;
+            }
+        }
+
+        /* Animation */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .fade-in-up {
+            animation: fadeInUp 0.8s ease-out;
+        }
+
+        /* Highlight styles for code blocks */
+        .highlight {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 1rem;
+            margin: 1rem 0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
+            overflow-x: auto;
+        }
+
+        .highlight code {
+            color: #495057;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <nav class="nav">
+                <div class="logo">
+                    <i class="fas fa-tachometer-alt"></i>
+                    IO性能测试平台
+                </div>
+                <ul class="nav-links">
+                    <li><a href="#features">功能特性</a></li>
+                    <li><a href="#tech-stack">技术栈</a></li>
+                    <li><a href="#documentation">文档资料</a></li>
+                    <li><a href="https://github.com/your-org/io-performance-platform">GitHub</a></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container fade-in-up">
+            <h1>专业的IO性能测试平台</h1>
+            <p>基于现代化技术栈构建的企业级存储性能测试解决方案</p>
+            <div class="cta-buttons">
+                <a href="#documentation" class="btn btn-primary">
+                    <i class="fas fa-book"></i>
+                    查看文档
+                </a>
+                <a href="https://github.com/your-org/io-performance-platform" class="btn btn-secondary">
+                    <i class="fab fa-github"></i>
+                    GitHub源码
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="features">
+        <div class="container">
+            <h2 class="section-title">核心功能特性</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-cogs"></i>
+                    </div>
+                    <h3>双测试引擎</h3>
+                    <p>同时支持fio和vdbench两种主流IO测试工具，满足不同场景的测试需求，提供灵活的测试配置选项。</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-network-wired"></i>
+                    </div>
+                    <h3>分布式测试</h3>
+                    <p>支持多节点、多分区的并发性能测试，可同时监控多个存储节点的性能表现。</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-chart-line"></i>
+                    </div>
+                    <h3>实时监控</h3>
+                    <p>提供实时的性能数据监控和可视化展示，支持IOPS、带宽、延迟等关键指标的实时查看。</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-chart-bar"></i>
+                    </div>
+                    <h3>数据分析</h3>
+                    <p>强大的数据分析和可视化功能，支持历史数据对比、性能趋势分析和详细的测试报告生成。</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-users"></i>
+                    </div>
+                    <h3>权限管理</h3>
+                    <p>完善的用户权限管理体系，支持管理员和普通用户角色，实现细粒度的权限控制。</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i class="fas fa-folder-open"></i>
+                    </div>
+                    <h3>项目管理</h3>
+                    <p>支持任务空间管理，可将测试任务按项目分类，便于团队协作和项目管理。</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Tech Stack -->
+    <section id="tech-stack" class="tech-stack">
+        <div class="container">
+            <h2 class="section-title">技术架构</h2>
+            <div class="tech-grid">
+                <div class="tech-category">
+                    <h3><i class="fas fa-desktop"></i> 前端技术</h3>
+                    <ul class="tech-list">
+                        <li><i class="fab fa-vuejs"></i> Vue.js 3 - 渐进式JavaScript框架</li>
+                        <li><i class="fas fa-layer-group"></i> Element Plus - Vue 3组件库</li>
+                        <li><i class="fas fa-chart-pie"></i> ECharts - 功能强大的图表库</li>
+                        <li><i class="fas fa-database"></i> Pinia - Vue状态管理</li>
+                        <li><i class="fas fa-route"></i> Vue Router - 路由管理</li>
+                    </ul>
+                </div>
+                
+                <div class="tech-category">
+                    <h3><i class="fas fa-server"></i> 后端技术</h3>
+                    <ul class="tech-list">
+                        <li><i class="fab fa-python"></i> Flask - 轻量级Python Web框架</li>
+                        <li><i class="fas fa-database"></i> SQLAlchemy - Python ORM工具</li>
+                        <li><i class="fas fa-shield-alt"></i> JWT - 安全的认证机制</li>
+                        <li><i class="fas fa-tasks"></i> Celery - 分布式任务队列</li>
+                        <li><i class="fas fa-memory"></i> Redis - 内存数据结构存储</li>
+                    </ul>
+                </div>
+                
+                <div class="tech-category">
+                    <h3><i class="fas fa-database"></i> 数据库</h3>
+                    <ul class="tech-list">
+                        <li><i class="fas fa-database"></i> MySQL 8.0 - 关系型数据库</li>
+                        <li><i class="fas fa-memory"></i> Redis - 缓存和消息队列</li>
+                        <li><i class="fas fa-key"></i> 数据加密 - 敏感信息保护</li>
+                        <li><i class="fas fa-index"></i> 索引优化 - 查询性能优化</li>
+                        <li><i class="fas fa-partition"></i> 分区策略 - 大数据处理</li>
+                    </ul>
+                </div>
+                
+                <div class="tech-category">
+                    <h3><i class="fab fa-docker"></i> 部署运维</h3>
+                    <ul class="tech-list">
+                        <li><i class="fab fa-docker"></i> Docker - 容器化平台</li>
+                        <li><i class="fas fa-cubes"></i> Docker Compose - 容器编排</li>
+                        <li><i class="fas fa-server"></i> Nginx - 高性能Web服务器</li>
+                        <li><i class="fas fa-chart-line"></i> 监控告警 - 系统状态监控</li>
+                        <li><i class="fas fa-shield-alt"></i> 安全防护 - 多层安全机制</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Documentation -->
+    <section id="documentation" class="documentation">
+        <div class="container">
+            <h2 class="section-title">文档资料</h2>
+            <div class="docs-grid">
+                <div class="doc-card">
+                    <h3><i class="fas fa-file-alt"></i> 技术方案</h3>
+                    <p>详细的技术架构设计、功能模块说明和实现方案，为项目开发提供完整的技术指导。</p>
+                    <a href="IO性能测试平台技术方案.md" class="doc-link">
+                        查看文档 <i class="fas fa-external-link-alt"></i>
+                    </a>
+                </div>
+                
+                <div class="doc-card">
+                    <h3><i class="fas fa-database"></i> 数据库设计</h3>
+                    <p>完整的数据库表结构设计、关系定义、索引优化策略和安全性考虑。</p>
+                    <a href="数据库设计方案.md" class="doc-link">
+                        查看文档 <i class="fas fa-external-link-alt"></i>
+                    </a>
+                </div>
+                
+                <div class="doc-card">
+                    <h3><i class="fas fa-rocket"></i> 部署指南</h3>
+                    <p>详细的部署说明，包括开发环境、生产环境的部署步骤和配置方法。</p>
+                    <a href="部署指南.md" class="doc-link">
+                        查看文档 <i class="fas fa-external-link-alt"></i>
+                    </a>
+                </div>
+                
+                <div class="doc-card">
+                    <h3><i class="fas fa-book"></i> 用户手册</h3>
+                    <p>完整的使用指南，包括功能介绍、操作说明和最佳实践建议。</p>
+                    <a href="用户使用手册.md" class="doc-link">
+                        查看文档 <i class="fas fa-external-link-alt"></i>
+                    </a>
+                </div>
+                
+                <div class="doc-card">
+                    <h3><i class="fas fa-chart-bar"></i> 项目总结</h3>
+                    <p>项目成果总结、技术特点分析和未来发展规划建议。</p>
+                    <a href="项目总结.md" class="doc-link">
+                        查看文档 <i class="fas fa-external-link-alt"></i>
+                    </a>
+                </div>
+                
+                <div class="doc-card">
+                    <h3><i class="fas fa-code"></i> 代码示例</h3>
+                    <p>前端Vue.js和后端Flask的代码示例，展示核心功能实现。</p>
+                    <div class="highlight">
+                        <code># 快速启动后端<br>cd backend && flask run --debug</code>
+                    </div>
+                    <div class="highlight">
+                        <code># 快速启动前端<br>cd frontend && npm run serve</code>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <p>&copy; 2024 IO性能测试平台. 专业的存储性能测试解决方案.</p>
+            <p>基于现代化技术栈构建，提供企业级的性能测试服务.</p>
+            <div class="footer-links">
+                <a href="#"><i class="fab fa-github"></i> GitHub</a>
+                <a href="#"><i class="fas fa-envelope"></i> 联系我们</a>
+                <a href="#"><i class="fas fa-shield-alt"></i> 隐私政策</a>
+                <a href="#"><i class="fas fa-file-contract"></i> 服务条款</a>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // 平滑滚动
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+
+        // 滚动动画
+        const observerOptions = {
+            threshold: 0.1,
+            rootMargin: '0px 0px -50px 0px'
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('fade-in-up');
+                }
+            });
+        }, observerOptions);
+
+        // 观察所有卡片元素
+        document.querySelectorAll('.feature-card, .tech-category, .doc-card').forEach(el => {
+            observer.observe(el);
+        });
+    </script>
+</body>
+</html>
