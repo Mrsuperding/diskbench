@@ -46,4 +46,18 @@ export default {
   cloneTask(taskId) {
     return request.post(`/tasks/${taskId}/clone`);
   },
+
+  // 获取任务日志
+  getTaskLogs(taskId, params = {}) {
+    return request.get(`/tasks/${taskId}/logs`, { params });
+  },
+
+  // 获取IOSTAT指标数据
+  getIOStatMetrics(logId, params) {
+    return request({
+      url: `/logs/${logId}/iostat-metrics`,
+      method: "get",
+      params,
+    });
+  },
 };

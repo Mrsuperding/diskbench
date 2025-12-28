@@ -194,7 +194,14 @@ import { ref, reactive, computed } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import loginCredentialsApi from "@/api/loginCredentials";
 import { useRouter } from "vue-router";
-import { Plus, Search, Edit, Delete, Hide, View } from "@element-plus/icons-vue";
+import {
+  Plus,
+  Search,
+  Edit,
+  Delete,
+  Hide,
+  View,
+} from "@element-plus/icons-vue";
 
 // 创建路由实例
 const router = useRouter();
@@ -275,14 +282,16 @@ const formRules = reactive({
   ],
   password: [
     {
-      required: () => !editingCredential.value && credentialForm.auth_type === "password",
+      required: () =>
+        !editingCredential.value && credentialForm.auth_type === "password",
       message: "请输入密码",
       trigger: "blur",
     },
   ],
   private_key: [
     {
-      required: () => !editingCredential.value && credentialForm.auth_type === "key",
+      required: () =>
+        !editingCredential.value && credentialForm.auth_type === "key",
       message: "请输入私钥内容",
       trigger: "blur",
     },
@@ -324,13 +333,15 @@ const openEditDialog = async (credential) => {
   try {
     dialogTitle.value = "编辑登录凭证";
     editingCredential.value = credential;
-    
-    console.log('打开编辑对话框，原始凭证信息:', credential);
-    
+
+    console.log("打开编辑对话框，原始凭证信息:", credential);
+
     // 获取包含敏感字段的完整凭证信息
-    const response = await loginCredentialsApi.getLoginCredential(credential.id);
-    console.log('API响应:', response);
-    
+    const response = await loginCredentialsApi.getLoginCredential(
+      credential.id,
+    );
+    console.log("API响应:", response);
+
     // 安全地获取凭证数据，处理不同的响应结构
     let fullCredential = null;
     if (response && response.data) {
@@ -341,29 +352,31 @@ const openEditDialog = async (credential) => {
         fullCredential = response.data;
       }
     }
-    
-    console.log('最终使用的凭证信息:', fullCredential);
-    
+
+    console.log("最终使用的凭证信息:", fullCredential);
+
     // 检查fullCredential是否有效
-    if (!fullCredential || typeof fullCredential !== 'object') {
-      throw new Error('获取的凭证信息格式不正确');
+    if (!fullCredential || typeof fullCredential !== "object") {
+      throw new Error("获取的凭证信息格式不正确");
     }
-    
+
     // 复制凭证信息到表单，添加空值检查
     credentialForm.alias = fullCredential.alias || credential.alias;
     credentialForm.username = fullCredential.username || credential.username;
     credentialForm.auth_type = fullCredential.auth_type || credential.auth_type;
-    credentialForm.password = fullCredential.password || '';
-    credentialForm.private_key = fullCredential.private_key || '';
-    credentialForm.passphrase = fullCredential.passphrase || '';
-    credentialForm.platform_partition = fullCredential.platform_partition || credential.platform_partition;
-    credentialForm.description = fullCredential.description || credential.description;
-    
-    console.log('表单数据设置后:', credentialForm);
-    
+    credentialForm.password = fullCredential.password || "";
+    credentialForm.private_key = fullCredential.private_key || "";
+    credentialForm.passphrase = fullCredential.passphrase || "";
+    credentialForm.platform_partition =
+      fullCredential.platform_partition || credential.platform_partition;
+    credentialForm.description =
+      fullCredential.description || credential.description;
+
+    console.log("表单数据设置后:", credentialForm);
+
     dialogVisible.value = true;
   } catch (error) {
-    console.error('加载登录凭证详情失败:', error);
+    console.error("加载登录凭证详情失败:", error);
     ElMessage.error("加载登录凭证详情失败: " + error.message);
   } finally {
     loading.value = false;

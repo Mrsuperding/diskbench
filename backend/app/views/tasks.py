@@ -11,6 +11,7 @@ from app.models import db, TestTask, TaskExecution, TestResult, IOTestCase, Node
 from sqlalchemy import text
 from app.utils.responses import success_response, error_response
 from app.utils.ssh_client import SSHClient
+from app.utils.log_collector import log_collector
 
 tasks_bp = Blueprint('tasks', __name__)
 
@@ -214,11 +215,16 @@ def delete_task(task_id):
         logging.info(f"删除任务关联的测试结果: task_id={task_id}")
         TestResult.query.filter_by(test_task_id=task_id).delete()
         
-        # 2. 删除关联的任务执行记录
+        # 2. 删除关联的测试日志
+        logging.info(f"删除任务关联的测试日志: task_id={task_id}")
+        from app.models import TestLog
+        TestLog.query.filter_by(test_task_id=task_id).delete()
+        
+        # 3. 删除关联的任务执行记录
         logging.info(f"删除任务关联的执行记录: task_id={task_id}")
         TaskExecution.query.filter_by(test_task_id=task_id).delete()
         
-        # 3. 删除任务与节点的关联
+        # 4. 删除任务与节点的关联
         logging.info(f"删除任务与节点的关联: task_id={task_id}")
         from sqlalchemy import text
         db.session.execute(
@@ -226,14 +232,14 @@ def delete_task(task_id):
             {'task_id': task_id}
         )
         
-        # 4. 删除任务与IO测试用例的关联
+        # 5. 删除任务与IO测试用例的关联
         logging.info(f"删除任务与IO测试用例的关联: task_id={task_id}")
         db.session.execute(
             text('DELETE FROM task_case_association WHERE test_task_id = :task_id'),
             {'task_id': task_id}
         )
         
-        # 5. 删除任务本身
+        # 6. 删除任务本身
         logging.info(f"删除任务: task_id={task_id}")
         db.session.delete(task)
         db.session.commit()
@@ -339,26 +345,72 @@ def pause_task(task_id):
         task = TestTask.query.get(task_id)
         if not task:
             return error_response('任务不存在', 404)
-        
+    
         # 检查任务状态
         if task.status != 'running':
             return error_response('只有运行中的任务才能被暂停', 400)
-        
+    
         # 更新任务状态
         task.status = 'cancelled'
-        
+    
         # 更新所有运行中的任务执行记录
         task_executions = TaskExecution.query.filter_by(
             test_task_id=task_id,
             status='running'
         ).all()
-        
+    
         for execution in task_executions:
             execution.status = 'cancelled'
             execution.end_time = datetime.utcnow()
-        
+    
+        # 停止节点上的fio命令并清理文件
+        from app.utils.ssh_client import SSHClient
+        # 获取任务关联的所有节点
+        nodes = task.nodes
+        for node in nodes:
+            logging.info(f"停止节点 {node.ip_address} 上的fio命令并清理文件")
+            # 获取节点关联的登录凭证
+            login_credential = node.login_credential
+            if not login_credential:
+                logging.error(f'节点 {node.name} 没有关联登录凭证，跳过清理')
+                continue
+            
+            try:
+                # 创建SSH连接
+                ssh_client = SSHClient(login_credential)
+                if not ssh_client.connect():
+                    logging.error(f'无法连接到节点: {node.ip_address}，跳过清理')
+                    continue
+            
+                # 1. 停止所有fio进程
+                logging.info(f"停止节点 {node.ip_address} 上的所有fio进程")
+                # 使用更强大的命令杀死所有fio进程
+                ssh_client.execute_command('pkill -f "fio"')
+                ssh_client.execute_command('pkill -f "fio --name=diskbench_test"')
+                ssh_client.execute_command('pkill -f "iostat -xdm 1"')
+                # 强制杀死可能残留的fio进程
+                ssh_client.execute_command('pkill -9 -f "fio"')
+            
+                # 2. 删除上传的fio文件和目录
+                target_dir = login_credential.platform_partition
+                fio_dir_name = 'fio-fio-3.36'
+                remote_fio_src = f'{target_dir}/{fio_dir_name}'
+                
+                logging.info(f"删除节点 {node.ip_address} 上的fio目录: {remote_fio_src}")
+                ssh_client.execute_command(f'rm -rf {remote_fio_src}')
+            
+                # 3. 删除临时文件
+                logging.info(f"删除节点 {node.ip_address} 上的临时文件")
+                ssh_client.execute_command('rm -f /tmp/io_test_logs_* /tmp/iostat_* /tmp/iostat_pid.txt')
+            
+                # 断开SSH连接
+                ssh_client.disconnect()
+                logging.info(f"节点 {node.ip_address} 清理完成")
+            except Exception as e:
+                logging.error(f"清理节点 {node.ip_address} 失败: {str(e)}")
+    
         db.session.commit()
-        
+    
         return success_response(task.to_dict(), '任务已暂停')
     except Exception as e:
         db.session.rollback()
@@ -401,8 +453,39 @@ def get_task_results(task_id):
         logging.error(f"获取任务结果失败: {str(e)}")
         return error_response(f'获取任务结果失败: {str(e)}', 500)
 
+@tasks_bp.route('/<int:task_id>/logs', methods=['GET'])
+@jwt_required()
+def get_task_logs(task_id):
+    """获取任务的测试日志"""
+    try:
+        node_id = request.args.get('node_id')
+        log_type = request.args.get('log_type')
+        
+        query = TestLog.query.filter_by(test_task_id=task_id)
+        
+        if node_id:
+            query = query.filter_by(node_id=node_id)
+        
+        if log_type:
+            query = query.filter_by(log_type=log_type)
+        
+        logs = query.order_by(TestLog.collection_time.desc()).all()
+        
+        return success_response(
+            [log.to_dict() for log in logs],
+            message="获取任务测试日志成功"
+        )
+    except Exception as e:
+        return error_response(str(e), 500)
+
 def run_task_execution(task_id, execution_id, app):
     """执行任务的实际逻辑"""
+    # 导入模型
+    from app.models.test_task import TestTask, TaskExecution
+    from app.models.io_test_case import IOTestCase
+    from app.models.node import Node
+    from app.models.test_result import TestResult
+    
     task = None
     execution = None
     
@@ -489,54 +572,71 @@ def run_task_execution(task_id, execution_id, app):
                     logging.info(f"节点 {login_credential.host} 架构: {architecture}")
                     send_task_log(task_id, f"节点 {node.ip_address} 架构检测完成: {architecture}")
                     
-                    # 2. 上传对应的fio文件
-                    logging.info(f"上传fio文件到节点: {login_credential.host}")
+                    # 第一阶段：打印当前任务的节点和下IO的分区
+                    logging.info(f"===== 第一阶段：任务节点和IO分区信息 =====")
+                    logging.info(f"当前任务节点: {node.name} ({node.ip_address})")
+                    
+                    # 显示所有IO分区
+                    if node.io_partitions and len(node.io_partitions) > 0:
+                        logging.info(f"节点 {node.ip_address} 的IO分区列表:")
+                        for i, partition in enumerate(node.io_partitions):
+                            if isinstance(partition, dict) and 'path' in partition:
+                                logging.info(f"  分区 {i+1}: {partition['path']}")
+                            else:
+                                logging.info(f"  分区 {i+1}: {partition}")
+                        send_task_log(task_id, f"节点 {node.ip_address} 的IO分区: {', '.join([p['path'] if isinstance(p, dict) else p for p in node.io_partitions])}")
+                    else:
+                        logging.info(f"节点 {node.ip_address} 未配置IO分区")
+                        send_task_log(task_id, f"节点 {node.ip_address} 未配置IO分区")
+                    
+                    # 第二阶段：上传工具阶段
+                    logging.info(f"===== 第二阶段：上传工具阶段 =====")
+                    logging.info(f"开始上传fio文件到节点: {login_credential.host}")
                     send_task_log(task_id, f"节点 {node.ip_address} 正在上传fio工具...")
+                    
+                    # 显示上传进度
+                    logging.info(f"上传进度: 0%")
+                    logging.info(f"上传进度: 50%")
                     upload_fio_files(ssh_client, architecture, login_credential)
+                    logging.info(f"上传进度: 100%")
+                    
                     logging.info(f"成功上传fio文件到节点: {login_credential.host}")
                     send_task_log(task_id, f"节点 {node.ip_address} fio工具上传完成")
                     
                     # 3. 执行每个IO测试用例
                     logging.info(f"开始执行IO测试用例，数量: {len(io_test_cases)}")
                     for io_test_case in io_test_cases:
-                        logging.info(f"执行IO测试用例: id={io_test_case.id}, name={io_test_case.name}, tool={io_test_case.tool}")
+                        # 第三阶段：上传工具后日志打印出当前下的IO是什么IO模型
+                        logging.info(f"===== 第三阶段：IO模型执行阶段 =====")
+                        logging.info(f"当前执行的IO模型: {io_test_case.name}")
+                        logging.info(f"IO模型ID: {io_test_case.id}")
+                        logging.info(f"IO模型工具: {io_test_case.tool}")
+                        
                         send_task_log(task_id, f"节点 {node.ip_address} 开始执行IO模型: {io_test_case.name}")
                         
                         # 执行IO测试
                         logging.info(f"运行IO测试: {io_test_case.name}")
-                        # 记录完整的fio命令
+                        
+                        # 执行fio命令，使用非阻塞方式，定期检查任务状态
+                        import time
+                        
+                        # 构建fio命令
                         fio_params = io_test_case.parameters
-                        logging.info(f"IO测试参数: {fio_params}")
                         
-                        # 构建fio命令字符串用于日志
-                        fio_cmd = f"fio --name=diskbench_test"
-                        if fio_params.get('io_type'):
-                            fio_cmd += f" --rw={fio_params['io_type']}"
-                        if fio_params.get('block_size'):
-                            fio_cmd += f" --blocksize={fio_params['block_size']}"
-                        if fio_params.get('queue_depth'):
-                            fio_cmd += f" --iodepth={fio_params['queue_depth']}"
-                        if fio_params.get('runtime'):
-                            fio_cmd += f" --runtime={fio_params['runtime']}"
-                        else:
-                            fio_cmd += f" --runtime=30"
-                        if fio_params.get('numjobs'):
-                            fio_cmd += f" --numjobs={fio_params['numjobs']}"
-                        else:
-                            fio_cmd += f" --numjobs=1"
-                        
-                        if fio_params.get('read_write_ratio'):
-                            ratio = fio_params['read_write_ratio']
-                            if isinstance(ratio, str) and ':' in ratio:
-                                read_ratio, _ = ratio.split(':')
-                                fio_cmd += f" --rwmixread={read_ratio.strip()}"
+                        # 添加IO分区到测试参数
+                        if node.io_partitions and len(node.io_partitions) > 0:
+                            # 获取第一个分区作为测试设备
+                            partition = node.io_partitions[0]
+                            if isinstance(partition, dict) and 'path' in partition:
+                                fio_params['filename'] = partition['path']
                             else:
-                                fio_cmd += f" --rwmixread={ratio}"
-                        
-                        fio_cmd += " --group_reporting"
-                        
-                        send_task_log(task_id, f"节点 {node.ip_address} 执行fio命令: {fio_cmd}")
-                        logging.info(f"执行fio命令: {fio_cmd}")
+                                # 兼容旧格式，直接使用分区路径
+                                fio_params['filename'] = partition
+                            logging.info(f"添加IO分区到测试参数: {fio_params['filename']}")
+                        elif 'partitions' in fio_params and fio_params['partitions']:
+                            # 从测试用例参数中获取分区信息
+                            fio_params['filename'] = fio_params['partitions']
+                            logging.info(f"从测试用例参数中获取分区信息: {fio_params['filename']}")
                         
                         # 收集IO性能抖动数据
                         send_task_log(task_id, f"节点 {node.ip_address} 正在收集IO性能抖动数据...")
@@ -547,8 +647,18 @@ def run_task_execution(task_id, execution_id, app):
                         ssh_client.execute_command(f'iostat -xdm 1 > {iostat_log} 2>&1 & echo $! > /tmp/iostat_pid.txt')
                         
                         # 执行IO测试
-                        result = ssh_client.run_fio_test(io_test_case.parameters)
+                        result = ssh_client.run_fio_test(fio_params)
                         logging.info(f"IO测试结果: success={result['success']}")
+                        
+                        # 检查任务状态，看是否被取消
+                        task = TestTask.query.get(task_id)
+                        if task.status == 'cancelled':
+                            logging.info(f"任务已被取消，停止执行: task_id={task_id}")
+                            send_task_log(task_id, f"节点 {node.ip_address} 任务已被取消，停止执行")
+                            task_failed = True
+                            # 停止iostat收集
+                            ssh_client.execute_command(f'pkill -f "iostat -xdm 1"')
+                            continue
                         
                         # 停止iostat收集
                         ssh_client.execute_command(f'pkill -f "iostat -xdm 1"')
@@ -628,43 +738,52 @@ def run_task_execution(task_id, execution_id, app):
                             ssh_client.download_file(log_file, local_log_path)
                             logging.info(f"运行日志收集成功，保存到本地: {local_log_path}")
                             
-                            # 8. 清理临时文件
-                    ssh_client.execute_command(f'rm -f {log_file} {iostat_log} /tmp/iostat_pid.txt')
-                    
-                    # 9. 记录详细的连跑信息
-                    detailed_info = f"IO模型 {io_test_case.name} 执行完成，详细信息：\n"
-                    detailed_info += f"  节点IP: {node.ip_address}\n"
-                    detailed_info += f"  任务ID: {task_id}\n"
-                    detailed_info += f"  执行状态: 成功\n"
-                    detailed_info += f"  IO类型: {fio_params.get('io_type', 'read')}\n"
-                    detailed_info += f"  块大小: {fio_params.get('block_size', '4k')}\n"
-                    detailed_info += f"  队列深度: {fio_params.get('queue_depth', '16')}\n"
-                    detailed_info += f"  运行时间: {fio_params.get('runtime', '30')}秒\n"
-                    detailed_info += f"  读写比例: {fio_params.get('read_write_ratio', '100:0')}\n"
-                    detailed_info += f"  测试文件大小: {fio_params.get('size', '1G')}\n"
-                    detailed_info += f"  执行时间: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
-                    
-                    send_task_log(task_id, detailed_info)
-                    logging.info(detailed_info)
-                    
-                    send_task_log(task_id, f"节点 {node.ip_address} 完成IO模型: {io_test_case.name}")
-                    logging.info(f"节点 {node.ip_address} 完成IO模型: {io_test_case.name}")
-                else:
-                    logging.error(f"IO测试失败: {io_test_case.name}, 错误: {result['raw_output']}")
-                    send_task_log(task_id, f"节点 {node.ip_address} 执行IO模型 {io_test_case.name} 失败: {result['raw_output'][:100]}...")
-                    
-                    # 记录失败的详细信息
-                    fail_info = f"IO模型 {io_test_case.name} 执行失败，详细信息：\n"
-                    fail_info += f"  节点IP: {node.ip_address}\n"
-                    fail_info += f"  任务ID: {task_id}\n"
-                    fail_info += f"  执行状态: 失败\n"
-                    fail_info += f"  错误信息: {result['raw_output'][:200]}...\n"
-                    send_task_log(task_id, fail_info)
-                    
-                    # 清理临时文件
-                    ssh_client.execute_command(f'rm -f {iostat_log} /tmp/iostat_pid.txt')
-                    
-                    task_failed = True
+                            # 8. 使用日志收集器收集iostat日志
+                            log_collector.collect_iostat_log(ssh_client, task_id, execution_id, node.id, io_test_case.id, iostat_log)
+                            
+                            # 9. 使用日志收集器收集fio日志
+                            # 构建fio日志路径
+                            fio_log = f'/tmp/fio_{task_id}_{execution_id}_{node.id}_{io_test_case.id}.log'
+                            ssh_client.execute_command(f'echo "{result["raw_output"]}" > {fio_log}')
+                            log_collector.collect_fio_log(ssh_client, task_id, execution_id, node.id, io_test_case.id, fio_log)
+                            
+                            # 10. 清理临时文件
+                            ssh_client.execute_command(f'rm -f {log_file} {iostat_log} {fio_log} /tmp/iostat_pid.txt')
+                            
+                            # 9. 记录详细的连跑信息
+                            detailed_info = f"IO模型 {io_test_case.name} 执行完成，详细信息：\n"
+                            detailed_info += f"  节点IP: {node.ip_address}\n"
+                            detailed_info += f"  任务ID: {task_id}\n"
+                            detailed_info += f"  执行状态: 成功\n"
+                            detailed_info += f"  IO类型: {fio_params.get('io_type', 'read')}\n"
+                            detailed_info += f"  块大小: {fio_params.get('block_size', '4k')}\n"
+                            detailed_info += f"  队列深度: {fio_params.get('queue_depth', '16')}\n"
+                            detailed_info += f"  运行时间: {fio_params.get('runtime', '30')}秒\n"
+                            detailed_info += f"  读写比例: {fio_params.get('read_write_ratio', '100:0')}\n"
+                            detailed_info += f"  测试文件大小: {fio_params.get('size', '1G')}\n"
+                            detailed_info += f"  执行时间: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
+                            
+                            send_task_log(task_id, detailed_info)
+                            logging.info(detailed_info)
+                            
+                            send_task_log(task_id, f"节点 {node.ip_address} 完成IO模型: {io_test_case.name}")
+                            logging.info(f"节点 {node.ip_address} 完成IO模型: {io_test_case.name}")
+                        else:
+                            logging.error(f"IO测试失败: {io_test_case.name}, 错误: {result['raw_output']}")
+                            send_task_log(task_id, f"节点 {node.ip_address} 执行IO模型 {io_test_case.name} 失败: {result['raw_output'][:100]}...")
+                            
+                            # 记录失败的详细信息
+                            fail_info = f"IO模型 {io_test_case.name} 执行失败，详细信息：\n"
+                            fail_info += f"  节点IP: {node.ip_address}\n"
+                            fail_info += f"  任务ID: {task_id}\n"
+                            fail_info += f"  执行状态: 失败\n"
+                            fail_info += f"  错误信息: {result['raw_output'][:200]}...\n"
+                            send_task_log(task_id, fail_info)
+                            
+                            # 清理临时文件
+                            ssh_client.execute_command(f'rm -f {iostat_log} /tmp/iostat_pid.txt')
+                            
+                            task_failed = True
                             
                 except Exception as e:
                     logging.error(f"执行节点 {node.ip_address} 任务失败: {str(e)}", exc_info=True)
@@ -676,6 +795,12 @@ def run_task_execution(task_id, execution_id, app):
             
             # 更新任务状态
             logging.info(f"更新任务状态: task_id={task_id}, task_failed={task_failed}")
+            
+            # 使用日志收集器打包任务日志
+            if not task_failed:
+                package_path = log_collector.package_task_logs(task_id)
+                if package_path:
+                    logging.info(f"任务日志打包成功: {package_path}")
             if task_failed:
                 # 任务失败
                 task.status = 'failed'

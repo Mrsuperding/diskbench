@@ -59,6 +59,18 @@ const routes = [
         meta: { title: "任务详情", icon: "List", hidden: true },
       },
       {
+        path: "/tasks/:id/jitter-chart",
+        name: "IOJitterChart",
+        component: () => import("@/views/IOJitterChart.vue"),
+        meta: { title: "IO性能抖动图表", icon: "List", hidden: true },
+      },
+      {
+        path: "/tasks/:id/iostat-chart",
+        name: "IOStatChart",
+        component: () => import("@/views/IOStatChart.vue"),
+        meta: { title: "IOSTAT性能图表", icon: "List", hidden: true },
+      },
+      {
         path: "/task-space",
         name: "TaskSpace",
         component: () => import("@/views/TaskSpace.vue"),
@@ -120,6 +132,12 @@ const routes = [
         name: "Results",
         component: () => import("@/views/Results.vue"),
         meta: { title: "测试结果", icon: "DataAnalysis" },
+      },
+      {
+        path: "/logs",
+        name: "LogVisualization",
+        component: () => import("@/views/LogVisualization.vue"),
+        meta: { title: "日志可视化", icon: "DataLine" },
       },
       {
         path: "/users",

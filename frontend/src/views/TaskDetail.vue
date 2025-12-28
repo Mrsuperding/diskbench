@@ -23,13 +23,23 @@
         <el-button type="primary" @click="showDetailedDataDialog">
           详细数据
         </el-button>
+        <el-button type="info" @click="navigateToIOJitterChart">
+          性能抖动图表
+        </el-button>
+        <el-button type="info" @click="navigateToIOStatChart">
+          IOSTAT性能图表
+        </el-button>
       </div>
     </div>
 
     <!-- 任务详情卡片 -->
     <el-card class="task-detail-card">
       <!-- 任务基本信息 - 可展开 -->
-      <el-collapse v-model="activeNames" accordion>
+      <el-collapse
+        v-model="activeNames"
+        accordion
+        @change="handleActiveNamesChange"
+      >
         <!-- 任务详情 -->
         <el-collapse-item title="任务详情" name="1">
           <div class="task-info">
@@ -214,48 +224,6 @@
             >
               加载更多日志
             </el-button>
-          </div>
-        </el-collapse-item>
-
-        <!-- 性能图表 -->
-        <el-collapse-item title="性能图表" name="5">
-          <div class="performance-charts">
-            <el-card shadow="hover">
-              <template #header>
-                <div class="card-header">
-                  <span>IO性能抖动图表</span>
-                  <el-select
-                    v-model="selectedIOModels"
-                    placeholder="选择IO模型"
-                    multiple
-                    style="width: 300px"
-                  >
-                    <el-option
-                      v-for="task in ioTasks"
-                      :key="task.id"
-                      :label="task.name"
-                      :value="task.id"
-                    ></el-option>
-                  </el-select>
-                </div>
-              </template>
-              <div class="chart-container">
-                <!-- 性能抖动图表 -->
-                <div ref="ioJitterChart" class="performance-chart"></div>
-              </div>
-            </el-card>
-            
-            <el-card shadow="hover" style="margin-top: 20px;">
-              <template #header>
-                <div class="card-header">
-                  <span>IOPS性能对比</span>
-                </div>
-              </template>
-              <div class="chart-container">
-                <!-- IOPS对比图表 -->
-                <div ref="iopsChart" class="performance-chart"></div>
-              </div>
-            </el-card>
           </div>
         </el-collapse-item>
       </el-collapse>
@@ -551,7 +519,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import tasksApi from "../api/tasks";
 import nodesApi from "../api/nodes";
 import ioCasesApi from "../api/ioCases";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { io } from "socket.io-client";
 import * as echarts from "echarts";
 import { use } from "echarts/core";
@@ -741,46 +709,46 @@ export default {
       // 接收任务日志
       socket.value.on("task_log", (data) => {
         console.log("收到任务日志:", data);
-        if (data && typeof data === 'object') {
+        let logContent = "";
+
+        // 处理不同格式的日志数据
+        if (data && typeof data === "object") {
           if (data.log) {
-            // 如果是字符串类型的日志
-            const logContent = data.log;
-            if (typeof logContent === 'string') {
-              // 如果是多条日志，分割后添加
-              const logLines = logContent.split("\n");
-              logLines.forEach((line) => {
-                if (line.trim()) {
-                  logs.value.push({
-                    id: logId++,
-                    timestamp: new Date().toLocaleString(),
-                    content: line.trim(),
-                  });
-                  console.log("添加日志:", line.trim());
-                }
-              });
-            } else if (typeof logContent === 'object') {
-              // 如果是对象类型的日志
+            logContent = data.log;
+          } else {
+            logContent = JSON.stringify(data);
+          }
+        } else if (typeof data === "string") {
+          logContent = data;
+        }
+
+        // 添加到日志列表
+        if (typeof logContent === "string") {
+          const logLines = logContent.split("\n");
+          logLines.forEach((line) => {
+            if (line.trim()) {
               logs.value.push({
                 id: logId++,
                 timestamp: new Date().toLocaleString(),
-                content: JSON.stringify(logContent),
+                content: line.trim(),
               });
+              console.log("添加日志:", line.trim());
+
+              // 尝试解析iostat日志
+              parseIostatLog(line.trim());
             }
-          } else {
-            // 如果直接是日志内容
-            logs.value.push({
-              id: logId++,
-              timestamp: new Date().toLocaleString(),
-              content: JSON.stringify(data),
-            });
-          }
-        } else if (typeof data === 'string') {
-          // 如果直接是字符串
+          });
+        } else if (typeof logContent === "object") {
           logs.value.push({
             id: logId++,
             timestamp: new Date().toLocaleString(),
-            content: data,
+            content: JSON.stringify(logContent),
           });
+
+          // 尝试解析iostat对象数据
+          if (logContent.type === "iostat") {
+            processIostatData(logContent);
+          }
         }
       });
 
@@ -1150,7 +1118,7 @@ export default {
         stopped: "info",
         pending: "warning",
         cancelled: "danger",
-        cancelling: "warning"
+        cancelling: "warning",
       };
       return types[status] || "info";
     };
@@ -1164,7 +1132,7 @@ export default {
         stopped: "已停止",
         pending: "待执行",
         cancelled: "已取消",
-        cancelling: "取消中"
+        cancelling: "取消中",
       };
       return texts[status] || status;
     };
@@ -1207,9 +1175,15 @@ export default {
 
     // 显示详细数据对话框
     const showDetailedDataDialog = async () => {
-      // 加载最新的测试结果
-      await loadTestResults();
-      detailedDataDialogVisible.value = true;
+      try {
+        // 加载最新的测试结果
+        await loadTestResults();
+      } catch (error) {
+        console.error("加载测试结果失败，但仍显示对话框:", error);
+      } finally {
+        // 无论加载结果如何，都显示对话框
+        detailedDataDialogVisible.value = true;
+      }
     };
 
     // 显示增加对话框
@@ -1511,294 +1485,21 @@ export default {
       loadTemplates();
     });
 
-    // 性能图表相关
-    const selectedIOModels = ref([]);
-    const ioJitterChartRef = ref(null);
-    const iopsChartRef = ref(null);
-    let ioJitterChart = null;
-    let iopsChart = null;
-    
-    // 初始化IO性能抖动图表
-    const initIOJitterChart = () => {
-      if (ioJitterChartRef.value) {
-        ioJitterChart = echarts.init(ioJitterChartRef.value);
-        
-        const option = {
-          title: {
-            text: 'IO性能抖动图',
-            left: 'center'
-          },
-          tooltip: {
-            trigger: 'axis'
-          },
-          legend: {
-            data: ['读IOPS', '写IOPS', '总IOPS'],
-            bottom: 0
-          },
-          grid: {
-            left: '3%',
-            right: '4%',
-            bottom: '15%',
-            containLabel: true
-          },
-          xAxis: {
-            type: 'category',
-            boundaryGap: false,
-            data: [],
-            name: '时间'
-          },
-          yAxis: {
-            type: 'value',
-            name: 'IOPS'
-          },
-          series: [
-            {
-              name: '读IOPS',
-              type: 'line',
-              data: [],
-              smooth: true,
-              lineStyle: {
-                color: '#5470c6'
-              },
-              areaStyle: {
-                color: {
-                  type: 'linear',
-                  x: 0,
-                  y: 0,
-                  x2: 0,
-                  y2: 1,
-                  colorStops: [{
-                    offset: 0, color: 'rgba(84, 112, 198, 0.5)'
-                  }, {
-                    offset: 1, color: 'rgba(84, 112, 198, 0.1)'
-                  }]
-                }
-              }
-            },
-            {
-              name: '写IOPS',
-              type: 'line',
-              data: [],
-              smooth: true,
-              lineStyle: {
-                color: '#91cc75'
-              },
-              areaStyle: {
-                color: {
-                  type: 'linear',
-                  x: 0,
-                  y: 0,
-                  x2: 0,
-                  y2: 1,
-                  colorStops: [{
-                    offset: 0, color: 'rgba(145, 204, 117, 0.5)'
-                  }, {
-                    offset: 1, color: 'rgba(145, 204, 117, 0.1)'
-                  }]
-                }
-              }
-            },
-            {
-              name: '总IOPS',
-              type: 'line',
-              data: [],
-              smooth: true,
-              lineStyle: {
-                color: '#fac858'
-              },
-              areaStyle: {
-                color: {
-                  type: 'linear',
-                  x: 0,
-                  y: 0,
-                  x2: 0,
-                  y2: 1,
-                  colorStops: [{
-                    offset: 0, color: 'rgba(250, 200, 88, 0.5)'
-                  }, {
-                    offset: 1, color: 'rgba(250, 200, 88, 0.1)'
-                  }]
-                }
-              }
-            }
-          ]
-        };
-        
-        ioJitterChart.setOption(option);
-        
-        // 监听窗口大小变化，自适应调整图表大小
-        window.addEventListener('resize', () => {
-          ioJitterChart.resize();
-        });
-      }
+    const router = useRouter();
+
+    // 跳转到性能抖动图表页面
+    const navigateToIOJitterChart = () => {
+      router.push({ name: "IOJitterChart", params: { id: taskId.value } });
     };
-    
-    // 初始化IOPS对比图表
-    const initIOPSChart = () => {
-      if (iopsChartRef.value) {
-        iopsChart = echarts.init(iopsChartRef.value);
-        
-        const option = {
-          title: {
-            text: 'IOPS性能对比',
-            left: 'center'
-          },
-          tooltip: {
-            trigger: 'axis',
-            axisPointer: {
-              type: 'shadow'
-            }
-          },
-          legend: {
-            data: ['最大IOPS', '平均IOPS', '最小IOPS'],
-            bottom: 0
-          },
-          grid: {
-            left: '3%',
-            right: '4%',
-            bottom: '15%',
-            containLabel: true
-          },
-          xAxis: {
-            type: 'category',
-            data: [],
-            name: 'IO模型'
-          },
-          yAxis: {
-            type: 'value',
-            name: 'IOPS'
-          },
-          series: [
-            {
-              name: '最大IOPS',
-              type: 'bar',
-              data: [],
-              itemStyle: {
-                color: '#5470c6'
-              }
-            },
-            {
-              name: '平均IOPS',
-              type: 'bar',
-              data: [],
-              itemStyle: {
-                color: '#91cc75'
-              }
-            },
-            {
-              name: '最小IOPS',
-              type: 'bar',
-              data: [],
-              itemStyle: {
-                color: '#fac858'
-              }
-            }
-          ]
-        };
-        
-        iopsChart.setOption(option);
-        
-        // 监听窗口大小变化，自适应调整图表大小
-        window.addEventListener('resize', () => {
-          iopsChart.resize();
-        });
-      }
+
+    // 跳转到IOSTAT性能图表页面
+    const navigateToIOStatChart = () => {
+      router.push({ name: "IOStatChart", params: { id: taskId.value } });
     };
-    
-    // 更新IO性能抖动图表数据
-    const updateIOJitterChart = () => {
-      if (ioJitterChart) {
-        // 模拟数据，实际应该从后端获取iostat数据
-        const timeData = [];
-        const readIOPS = [];
-        const writeIOPS = [];
-        const totalIOPS = [];
-        
-        // 生成过去60秒的数据
-        for (let i = 60; i >= 0; i--) {
-          const time = new Date(Date.now() - i * 1000);
-          timeData.push(time.toLocaleTimeString());
-          
-          // 生成随机IOPS数据
-          const read = Math.floor(Math.random() * 1000) + 500;
-          const write = Math.floor(Math.random() * 800) + 300;
-          readIOPS.push(read);
-          writeIOPS.push(write);
-          totalIOPS.push(read + write);
-        }
-        
-        ioJitterChart.setOption({
-          xAxis: {
-            data: timeData
-          },
-          series: [
-            {
-              data: readIOPS
-            },
-            {
-              data: writeIOPS
-            },
-            {
-              data: totalIOPS
-            }
-          ]
-        });
-      }
-    };
-    
-    // 更新IOPS对比图表数据
-    const updateIOPSChart = () => {
-      if (iopsChart && selectedIOModels.value.length > 0) {
-        const ioModelNames = selectedIOModels.value.map(id => {
-          const task = ioTasks.value.find(t => t.id === id);
-          return task ? task.name : `IO模型${id}`;
-        });
-        
-        const maxIOPS = [];
-        const avgIOPS = [];
-        const minIOPS = [];
-        
-        // 为每个选中的IO模型生成随机数据
-        selectedIOModels.value.forEach(() => {
-          const max = Math.floor(Math.random() * 2000) + 1000;
-          const min = Math.floor(Math.random() * 800) + 300;
-          const avg = Math.floor((max + min) / 2);
-          
-          maxIOPS.push(max);
-          avgIOPS.push(avg);
-          minIOPS.push(min);
-        });
-        
-        iopsChart.setOption({
-          xAxis: {
-            data: ioModelNames
-          },
-          series: [
-            {
-              data: maxIOPS
-            },
-            {
-              data: avgIOPS
-            },
-            {
-              data: minIOPS
-            }
-          ]
-        });
-      }
-    };
-    
-    // 监听选中IO模型变化，更新图表
-    watch(selectedIOModels, () => {
-      updateIOPSChart();
-    }, { deep: true });
-    
+
     // 组件挂载后初始化图表
     onMounted(() => {
-      initIOJitterChart();
-      initIOPSChart();
-      // 模拟数据更新
-      updateIOJitterChart();
+      // 这里的图表初始化代码已经移除，性能抖动图表现在是一个独立的页面
     });
 
     return {
@@ -1856,12 +1557,12 @@ export default {
       detailedDataDialogVisible,
       detailedData,
       testResults,
-      selectedIOModels,
       showDetailedDataDialog,
       showResultDetails,
-      // 图表相关
-      ioJitterChartRef,
-      iopsChartRef,
+      // 跳转到性能抖动图表
+      navigateToIOJitterChart,
+      // 跳转到IOSTAT性能图表
+      navigateToIOStatChart,
     };
   },
 };

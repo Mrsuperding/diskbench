@@ -7,6 +7,7 @@ from flask_socketio import SocketIO
 
 from config import config
 from app.models import db
+from app.utils.log_collector import log_collector
 
 # 导入所有视图蓝图
 from app.views.auth import auth_bp
@@ -18,6 +19,7 @@ from app.views.results import results_bp
 from app.views.task_spaces import task_spaces_bp
 from app.views.dashboard import dashboard_bp
 from app.views.login_credentials import login_credentials_bp
+from app.views.logs import logs_bp
 
 from app.utils.error_handlers import register_error_handlers
 from app.utils.jwt_callbacks import register_jwt_callbacks
@@ -70,6 +72,7 @@ def create_app(config_name=None):
     app.register_blueprint(task_spaces_bp, url_prefix='/api/task-spaces')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
     app.register_blueprint(login_credentials_bp, url_prefix='/api/login-credentials')
+    app.register_blueprint(logs_bp, url_prefix='/api/logs')
     
     # 注册错误处理
     register_error_handlers(app)
@@ -79,6 +82,9 @@ def create_app(config_name=None):
     
     # 初始化API文档
     init_api(app)
+    
+    # 初始化日志收集器
+    log_collector.init_app(app)
     
     # 健康检查端点
     @app.route('/health')

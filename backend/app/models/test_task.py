@@ -52,11 +52,23 @@ class TestTask(db.Model):
         ).fetchall()
         node_ids = [node_id[0] for node_id in node_id_results]
         
+        # 获取完整的节点信息
+        from app.models import Node
+        nodes = []
+        for node_id in node_ids:
+            node = Node.query.get(node_id)
+            if node:
+                nodes.append({
+                    'id': node.id,
+                    'name': node.name
+                })
+        
         return {
             'id': self.id,
             'name': self.name,
             'description': self.description,
             'node_ids': node_ids,
+            'nodes': nodes,  # 返回完整的节点信息
             'io_test_case_ids': io_test_case_ids,
             'task_space_id': self.task_space_id,
             'status': self.status,

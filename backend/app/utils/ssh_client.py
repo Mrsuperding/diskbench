@@ -241,7 +241,7 @@ class SSHClient:
                 return None
         
         # 构建fio命令的辅助函数
-        def build_cmd_parts(params, current_iodepth=None):
+        def build_cmd_parts(params, current_iodepth=None, current_blocksize=None):
             parts = ['fio']
             
             # 添加默认作业名称
@@ -262,10 +262,11 @@ class SSHClient:
                 mapped_key = param_mapping.get(key, key)
                 
                 # 获取当前值
+                val = value
                 if key == 'queue_depth' and current_iodepth is not None:
                     val = current_iodepth.strip()
-                else:
-                    val = value
+                elif (key == 'block_size' or key == 'blocksize') and current_blocksize is not None:
+                    val = current_blocksize.strip()
                 
                 # 转换为字符串
                 if isinstance(val, bool):
@@ -301,62 +302,95 @@ class SSHClient:
             
             return parts
         
-        # 检查queue_depth是否需要特殊处理
-        queue_depth = fio_params.get('queue_depth')
-        if queue_depth and isinstance(queue_depth, str) and ',' in queue_depth:
-            # 处理多个queue_depth值
-            queue_depths = queue_depth.split(',')
-            all_results = []
-            
-            for qd in queue_depths:
-                qd = qd.strip()
-                if not qd:
-                    continue
-                
-                # 构建当前值的fio命令
-                single_cmd_parts = build_cmd_parts(fio_params, current_iodepth=qd)
-                
-                command = ' '.join(single_cmd_parts)
-                
-                # 切换到工作目录
-                if working_dir:
-                    command = f'cd {working_dir} && {command}'
-                
-                # 执行fio命令
-                success, output = self.execute_command(command, timeout=3600)  # 1小时超时
-                
-                all_results.append({
-                    'success': success,
-                    'raw_output': output,
-                    'parsed_output': self._parse_fio_output(output) if success else None,
-                    'params': {'iodepth': qd}
-                })
-            
-            # 返回所有测试结果的合并结果
-            return {
-                'success': all(r['success'] for r in all_results),
-                'raw_output': '\n\n'.join(r['raw_output'] for r in all_results),
-                'parsed_output': all_results
-            }
+        # 获取读写模式列表
+        io_type = fio_params.get('io_type', fio_params.get('rw', 'read'))
+        io_types = []
+        if isinstance(io_type, str) and ',' in io_type:
+            io_types = [it.strip() for it in io_type.split(',') if it.strip()]
+        elif io_type:
+            io_types = [str(io_type).strip()]
         else:
-            # 处理单个queue_depth值
-            cmd_parts = build_cmd_parts(fio_params)
+            io_types = ['read']  # 默认读写模式
+        
+        # 获取队列深度列表
+        queue_depth = fio_params.get('queue_depth')
+        queue_depths = []
+        if queue_depth and isinstance(queue_depth, str) and ',' in queue_depth:
+            queue_depths = [qd.strip() for qd in queue_depth.split(',') if qd.strip()]
+        elif queue_depth:
+            queue_depths = [str(queue_depth).strip()]
+        else:
+            queue_depths = ['16']  # 默认队列深度
+        
+        # 获取块大小列表
+        block_size = fio_params.get('block_size', fio_params.get('blocksize'))
+        block_sizes = []
+        if block_size and isinstance(block_size, str) and ',' in block_size:
+            block_sizes = [bs.strip() for bs in block_size.split(',') if bs.strip()]
+        elif block_size:
+            block_sizes = [str(block_size).strip()]
+        else:
+            block_sizes = ['4k']  # 默认块大小
+        
+        # 处理块大小单位，确保每个块大小都有单位
+        processed_block_sizes = []
+        for bs in block_sizes:
+            # 如果块大小没有单位，添加kb单位
+            if bs.isdigit():
+                processed_block_sizes.append(f'{bs}k')
+            else:
+                processed_block_sizes.append(bs)
+        block_sizes = processed_block_sizes
+        
+        # 生成所有组合
+        all_combinations = []
+        for io in io_types:
+            for qd in queue_depths:
+                for bs in block_sizes:
+                    all_combinations.append({'io_type': io, 'iodepth': qd, 'blocksize': bs})
+        
+        # 执行所有组合测试
+        all_results = []
+        for combo in all_combinations:
+            io = combo['io_type']
+            qd = combo['iodepth']
+            bs = combo['blocksize']
             
-            command = ' '.join(cmd_parts)
+            # 构建当前组合的fio命令
+            # 创建副本，避免修改原参数
+            current_params = fio_params.copy()
+            # 设置当前组合的参数
+            current_params['io_type'] = io
+            
+            single_cmd_parts = build_cmd_parts(current_params, current_iodepth=qd, current_blocksize=bs)
+            
+            command = ' '.join(single_cmd_parts)
             
             # 切换到工作目录
             if working_dir:
                 command = f'cd {working_dir} && {command}'
             
+            # 记录当前组合的详细信息
+            logger.info(f"执行fio测试组合: io_type={io}, iodepth={qd}, blocksize={bs}")
+            logger.info(f"执行fio命令: {command}")
+            
             # 执行fio命令
             success, output = self.execute_command(command, timeout=3600)  # 1小时超时
             
-            # 返回统一格式的结果
-            return {
+            all_results.append({
                 'success': success,
                 'raw_output': output,
-                'parsed_output': self._parse_fio_output(output) if success else None
-            }
+                'parsed_output': self._parse_fio_output(output) if success else None,
+                'params': {'io_type': io, 'iodepth': qd, 'blocksize': bs},
+                'command': command  # 保存完整命令
+            })
+        
+        # 返回所有测试结果的合并结果
+        return {
+            'success': all(r['success'] for r in all_results),
+            'raw_output': '\n\n'.join(r['raw_output'] for r in all_results),
+            'parsed_output': all_results
+        }
     
     def _parse_fio_output(self, output):
         """解析fio输出结果"""

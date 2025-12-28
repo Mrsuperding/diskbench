@@ -552,7 +552,7 @@ export default {
         stopped: "info",
         pending: "warning",
         cancelled: "danger",
-        cancelling: "warning"
+        cancelling: "warning",
       };
       return types[status] || "info";
     };
@@ -566,7 +566,7 @@ export default {
         stopped: "已停止",
         pending: "待执行",
         cancelled: "已取消",
-        cancelling: "取消中"
+        cancelling: "取消中",
       };
       return texts[status] || status;
     };

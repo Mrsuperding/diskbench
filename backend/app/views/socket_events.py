@@ -52,7 +52,7 @@ def register_socket_events(socketio):
         
         try:
             # 验证任务是否存在
-            task_execution = TaskExecution.query.filter_by(task_id=task_id).first()
+            task_execution = TaskExecution.query.filter_by(test_task_id=task_id).first()
             if not task_execution:
                 emit('error', {'message': '任务不存在'})
                 return
@@ -70,10 +70,6 @@ def register_socket_events(socketio):
             
             logger.info('客户端 %s 加入任务 %s 的日志房间', client_id, task_id)
             emit('join_room_response', {'message': f'已加入任务 {task_id} 的日志房间'})
-            
-            # 发送历史日志
-            if task_execution.log_content:
-                emit('task_log', {'log': task_execution.log_content})
         except Exception as e:
             logger.error('加入任务房间失败: %s', str(e))
             emit('error', {'message': f'加入房间失败: {str(e)}'})
