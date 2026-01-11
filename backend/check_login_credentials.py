@@ -1,56 +1,49 @@
-# 检查登录凭证数据表
-import sys
-import os
+# 检查登录凭证信息
+import pymysql
+from config import config
 
-# 添加当前目录到Python路径
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# 从配置中获取数据库连接信息
+db_config = config['default'].SQLALCHEMY_DATABASE_URI
 
-# 导入app.py中的create_app函数
-import app
-create_app = app.create_app
-from app.models import db, LoginCredential
-from sqlalchemy import inspect
+# 解析连接字符串
+import re
+match = re.match(r'mysql\+pymysql://(.*?):(.*?)@(.*?):(\d+)/(.*?)$', db_config)
+if not match:
+    raise ValueError("Invalid database URI format")
 
-# 创建应用实例
-app = create_app()
+user, password, host, port, database = match.groups()
+port = int(port)
 
-with app.app_context():
-    print("检查登录凭证数据表...")
+# 连接数据库
+conn = pymysql.connect(
+    host=host,
+    port=port,
+    user=user,
+    password=password,
+    database=database,
+    charset='utf8mb4'
+)
+
+# 创建游标
+cursor = conn.cursor()
+
+try:
+    print("检查可用的登录凭证...")
     
-    # 使用SQLAlchemy的inspect来检查数据库结构
-    inspector = inspect(db.engine)
+    # 查询登录凭证表
+    cursor.execute("SELECT id, username, type, created_at FROM login_credentials")
+    credentials = cursor.fetchall()
     
-    # 检查login_credentials表是否存在
-    tables = inspector.get_table_names()
-    print(f"数据库中的表: {tables}")
-    
-    if 'login_credentials' in tables:
-        print("\n✅ 登录凭证数据表(login_credentials)存在!")
+    print(f"找到 {len(credentials)} 个登录凭证:")
+    for credential in credentials:
+        id_, username, type_, created_at = credential
+        print(f"  ID: {id_}, 用户名: {username}, 类型: {type_}, 创建时间: {created_at}")
         
-        # 获取表结构
-        columns = inspector.get_columns('login_credentials')
-        print("表结构:")
-        for column in columns:
-            print(f"- {column['name']} ({column['type']}) - {column.get('comment', '')}")
+    # 如果有凭证，返回第一个的ID
+    if credentials:
+        print(f"\n建议使用第一个凭证ID: {credentials[0][0]}")
         
-        # 检查数据
-        count = db.session.query(LoginCredential).count()
-        print(f"\n当前凭证数量: {count}")
-        
-        if count > 0:
-            print("\n部分凭证信息:")
-            credentials = db.session.query(LoginCredential).limit(3).all()
-            for cred in credentials:
-                print(f"- ID: {cred.id}, 别名: {cred.alias}, 主机: {cred.host}")
-    else:
-        print("\n❌ 登录凭证数据表不存在!")
-        
-        # 如果表不存在，考虑创建
-        print("尝试创建表...")
-        db.create_all()
-        
-        # 再次检查
-        if 'login_credentials' in inspector.get_table_names():
-            print("✅ 表已成功创建!")
-        else:
-            print("❌ 表创建失败!")
+finally:
+    # 关闭游标和连接
+    cursor.close()
+    conn.close()

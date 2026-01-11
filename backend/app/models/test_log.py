@@ -102,7 +102,7 @@ class IOStatMetric(db.Model):
             'write_kbps': self.write_kbps,
             'read_iops': self.read_iops,
             'write_iops': self.write_iops,
-            'await': self.await_time,
+            'await_time': self.await_time,
             'svctm': self.svctm,
             'util': self.util,
             'created_at': self.created_at.isoformat(),

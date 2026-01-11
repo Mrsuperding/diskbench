@@ -7,7 +7,7 @@ module.exports = defineConfig({
     historyApiFallback: true,
     proxy: {
       "/api": {
-        target: "http://localhost:5001",
+        target: "http://localhost:5002",
         changeOrigin: true,
         pathRewrite: {
           "^/api": "/api",

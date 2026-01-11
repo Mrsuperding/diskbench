@@ -3,6 +3,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime
 import threading
 import logging
+import os
 
 # 导入WebSocket日志发送功能
 from app.views.socket_events import send_task_log
@@ -376,10 +377,11 @@ def pause_task(task_id):
                 continue
             
             try:
-                # 创建SSH连接
-                ssh_client = SSHClient(login_credential)
+                # 使用节点的actual IP进行SSH连接
+                connect_host = node.ip_address
+                ssh_client = SSHClient(login_credential, hostname=connect_host)
                 if not ssh_client.connect():
-                    logging.error(f'无法连接到节点: {node.ip_address}，跳过清理')
+                    logging.error(f'无法连接到节点: {connect_host}，跳过清理')
                     continue
             
                 # 1. 停止所有fio进程
@@ -478,6 +480,48 @@ def get_task_logs(task_id):
     except Exception as e:
         return error_response(str(e), 500)
 
+@tasks_bp.route('/<int:task_id>/logs/package', methods=['POST'])
+@jwt_required()
+def package_task_logs(task_id):
+    """打包任务日志"""
+    try:
+        # 使用日志收集器打包任务日志
+        package_path = log_collector.package_task_logs(task_id)
+        if not package_path:
+            return error_response('打包任务日志失败', 500)
+        
+        return success_response({'package_path': package_path}, '任务日志打包成功')
+    except Exception as e:
+        return error_response(f'打包任务日志失败: {str(e)}', 500)
+
+@tasks_bp.route('/<int:task_id>/logs/download', methods=['GET'])
+@jwt_required()
+def download_task_logs(task_id):
+    """下载任务日志压缩包"""
+    try:
+        from flask import send_file
+        
+        # 首先检查是否已经有打包文件
+        # 从配置中获取本地数据存储目录
+        local_data_dir = current_app.config.get('LOCAL_DATA_DIR', './local_data')
+        package_filename = f'task_{task_id}_logs.tar.gz'
+        package_path = os.path.join(local_data_dir, package_filename)
+        
+        # 如果打包文件不存在，先打包
+        if not os.path.exists(package_path):
+            package_path = log_collector.package_task_logs(task_id)
+            if not package_path:
+                return error_response('打包任务日志失败', 500)
+        
+        # 发送文件下载
+        return send_file(
+            package_path,
+            as_attachment=True,
+            download_name=os.path.basename(package_path)
+        )
+    except Exception as e:
+        return error_response(f'下载任务日志失败: {str(e)}', 500)
+
 def run_task_execution(task_id, execution_id, app):
     """执行任务的实际逻辑"""
     # 导入模型
@@ -554,22 +598,23 @@ def run_task_execution(task_id, execution_id, app):
                 
                 logging.info(f"获取到登录凭证: id={login_credential.id}, alias={login_credential.alias}, host={login_credential.host}, port={login_credential.port}")
                 
-                # 创建SSH连接
-                logging.info(f"创建SSH连接: host={login_credential.host}, port={login_credential.port}")
-                ssh_client = SSHClient(login_credential)
+                # 使用节点的actual IP进行SSH连接
+                connect_host = node.ip_address
+                logging.info(f"创建SSH连接: host={connect_host}, port={login_credential.port}")
+                ssh_client = SSHClient(login_credential, hostname=connect_host)
                 
                 try:
                     # 连接到节点
-                    logging.info(f"连接到节点: {login_credential.host}")
+                    logging.info(f"连接到节点: {connect_host}")
                     if not ssh_client.connect():
-                        raise Exception(f'无法连接到节点: {login_credential.host}')
-                    logging.info(f"成功连接到节点: {login_credential.host}")
+                        raise Exception(f'无法连接到节点: {connect_host}')
+                    logging.info(f"成功连接到节点: {connect_host}")
                     
                     # 1. 检测节点架构
-                    logging.info(f"检测节点架构: {login_credential.host}")
+                    logging.info(f"检测节点架构: {connect_host}")
                     send_task_log(task_id, f"节点 {node.ip_address} 正在检测架构...")
                     architecture = detect_node_architecture(ssh_client)
-                    logging.info(f"节点 {login_credential.host} 架构: {architecture}")
+                    logging.info(f"节点 {connect_host} 架构: {architecture}")
                     send_task_log(task_id, f"节点 {node.ip_address} 架构检测完成: {architecture}")
                     
                     # 第一阶段：打印当前任务的节点和下IO的分区
@@ -644,7 +689,7 @@ def run_task_execution(task_id, execution_id, app):
                         
                         # 启动iostat收集后台数据
                         iostat_log = f'/tmp/iostat_{task_id}_{execution_id}_{node.id}_{io_test_case.id}.log'
-                        ssh_client.execute_command(f'iostat -xdm 1 > {iostat_log} 2>&1 & echo $! > /tmp/iostat_pid.txt')
+                        ssh_client.execute_command(f"sh -c 'iostat -xdm 1 > {iostat_log} 2>&1 & echo $! > /tmp/iostat_pid.txt'")
                         
                         # 执行IO测试
                         result = ssh_client.run_fio_test(fio_params)
@@ -727,25 +772,53 @@ def run_task_execution(task_id, execution_id, app):
                             
                             # 收集fio测试输出
                             ssh_client.execute_command(f'echo "===== FIO TEST OUTPUT =====" >> {log_file}')
-                            ssh_client.execute_command(f'echo "{result["raw_output"]}" >> {log_file}')
+                            # 使用cat和heredoc写入fio结果，避免特殊字符问题
+                            fio_result_file = f'/tmp/fio_result_{task_id}_{node.id}_{io_test_case.id}.txt'
+                            ssh_client.execute_command(f'''cat > {fio_result_file} << "EOF"
+{result["raw_output"]}
+EOF''')
+                            ssh_client.execute_command(f'cat {fio_result_file} >> {log_file}')
                             
                             # 收集iostat输出
                             ssh_client.execute_command(f'echo "===== IOSTAT OUTPUT =====" >> {log_file}')
                             ssh_client.execute_command(f'cat {iostat_log} >> {log_file}')
                             
                             # 7. 下载日志到本地
-                            local_log_path = f'/Users/mrsuperding/Desktop/study_python2/diskbench_pro2/util/io_test_logs_{task_id}_{execution_id}_{node.id}_{io_test_case.id}_{datetime.now().strftime("%Y%m%d%H%M%S")}.log'
-                            ssh_client.download_file(log_file, local_log_path)
-                            logging.info(f"运行日志收集成功，保存到本地: {local_log_path}")
+                            # 使用动态计算的项目根路径
+                            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+                            util_dir = os.path.join(project_root, 'util')
+                            
+                            # 创建日志目录（如果不存在）
+                            os.makedirs(util_dir, exist_ok=True)
+                            
+                            # 下载组合日志文件
+                            local_log_path = os.path.join(util_dir, f'io_test_logs_{task_id}_{execution_id}_{node.id}_{io_test_case.id}_{datetime.now().strftime("%Y%m%d%H%M%S")}.log')
+                            success, message = ssh_client.download_file(log_file, local_log_path)
+                            if success:
+                                logging.info(f"运行日志收集成功，保存到本地: {local_log_path}")
+                            else:
+                                logging.error(f"运行日志下载失败: {message}")
                             
                             # 8. 使用日志收集器收集iostat日志
-                            log_collector.collect_iostat_log(ssh_client, task_id, execution_id, node.id, io_test_case.id, iostat_log)
+                            iostat_log_obj = log_collector.collect_iostat_log(ssh_client, task_id, execution_id, node.id, io_test_case.id, iostat_log)
+                            if iostat_log_obj:
+                                logging.info(f"iostat日志收集成功")
+                            else:
+                                logging.error(f"iostat日志收集失败")
                             
                             # 9. 使用日志收集器收集fio日志
                             # 构建fio日志路径
                             fio_log = f'/tmp/fio_{task_id}_{execution_id}_{node.id}_{io_test_case.id}.log'
-                            ssh_client.execute_command(f'echo "{result["raw_output"]}" > {fio_log}')
-                            log_collector.collect_fio_log(ssh_client, task_id, execution_id, node.id, io_test_case.id, fio_log)
+                            # 将fio结果写入文件（使用echo可能会导致格式问题，改用cat命令）
+                            command = f'''cat > {fio_log} << "EOF"
+{result["raw_output"]}
+EOF'''
+                            ssh_client.execute_command(command)
+                            fio_log_obj = log_collector.collect_fio_log(ssh_client, task_id, execution_id, node.id, io_test_case.id, fio_log)
+                            if fio_log_obj:
+                                logging.info(f"fio日志收集成功")
+                            else:
+                                logging.error(f"fio日志收集失败")
                             
                             # 10. 清理临时文件
                             ssh_client.execute_command(f'rm -f {log_file} {iostat_log} {fio_log} /tmp/iostat_pid.txt')
@@ -888,7 +961,8 @@ def upload_fio_files(ssh_client, architecture, login_credential):
         logging.info(f"成功创建目录: {target_dir}")
         
         # 2. 打包fio源码为zip文件
-        local_fio_src = '/Users/mrsuperding/Desktop/study_python2/diskbench_pro2/util/fio-fio-3.36'
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+        local_fio_src = os.path.join(project_root, 'util', 'fio-fio-3.36')
         fio_dir_name = os.path.basename(local_fio_src)
         
         # 创建临时zip文件
@@ -931,13 +1005,26 @@ def upload_fio_files(ssh_client, architecture, login_credential):
         if not success:
             raise Exception(f"解压压缩包失败: {output}")
         logging.info(f"压缩包解压成功")
-        
+
         # 6. 删除远程zip文件
         ssh_client.execute_command(f'rm -f {remote_zip_path}')
         logging.info(f"删除远程压缩包")
-        
-        # 7. 在节点上编译fio
-        # 7.1 为所有可执行文件添加执行权限
+
+        # 7. 转换文件格式从Windows CRLF到Linux LF
+        logging.info("转换文件格式为Linux格式（解决换行符问题）")
+        find_dos2unix_cmd = f'which dos2unix'
+        success, _ = ssh_client.execute_command(find_dos2unix_cmd)
+        if success:
+            ssh_client.execute_command(f"find {remote_fio_src} -type f -name '*.sh' -exec dos2unix {{}} +")
+            ssh_client.execute_command(f'dos2unix {remote_fio_src}/configure 2>/dev/null || true')
+            ssh_client.execute_command(f'dos2unix {remote_fio_src}/FIO-VERSION-GEN 2>/dev/null || true')
+            logging.info("文件格式转换完成")
+        else:
+            ssh_client.execute_command(f"find {remote_fio_src} -type f -exec sed -i 's/\\r$//' {{}} +")
+            logging.info("使用sed转换文件格式完成")
+
+        # 8. 在节点上编译fio
+        # 8.1 为所有可执行文件添加执行权限
         chmod_cmd = f'chmod -R +x {remote_fio_src}/'
         logging.info(f"为fio源码目录添加执行权限: {chmod_cmd}")
         success, output = ssh_client.execute_command(chmod_cmd)
@@ -946,7 +1033,7 @@ def upload_fio_files(ssh_client, architecture, login_credential):
             raise Exception(f"添加执行权限失败: {output}")
         logging.info("成功添加执行权限")
         
-        # 7.2 执行编译
+        # 8.2 执行编译
         compile_cmd = f'cd {remote_fio_src} && make -j$(nproc)'
         logging.info(f"编译fio源码: {compile_cmd}")
         success, output = ssh_client.execute_command(compile_cmd, timeout=600)
@@ -955,7 +1042,7 @@ def upload_fio_files(ssh_client, architecture, login_credential):
             raise Exception(f"fio编译失败: {output}")
         logging.info("fio编译成功")
         
-        # 8. 验证编译后的fio能否正常执行
+        # 9. 验证编译后的fio能否正常执行
         logging.info("验证编译后的fio能否正常执行")
         test_cmd = f'{remote_fio_src}/fio --version'
         success, output = ssh_client.execute_command(test_cmd)
@@ -964,8 +1051,8 @@ def upload_fio_files(ssh_client, architecture, login_credential):
             raise Exception(f"fio执行失败: {output}")
         logging.info(f"fio执行成功，版本: {output.strip()}")
         
-        # 9. 添加fio到PATH，方便后续使用
-        ssh_client.execute_command(f'echo \'export PATH={remote_fio_src}:$PATH\' >> ~/.bashrc')
+        # 10. 添加fio到PATH，方便后续使用
+        ssh_client.execute_command(f'echo "export PATH={remote_fio_src}:$PATH" >> ~/.bashrc')
         
         logging.info("fio工具上传和配置完成")
         

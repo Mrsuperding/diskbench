@@ -29,6 +29,9 @@
         <el-button type="info" @click="navigateToIOStatChart">
           IOSTAT性能图表
         </el-button>
+        <el-button type="success" @click="downloadTaskLogs">
+          下载日志
+        </el-button>
       </div>
     </div>
 
@@ -554,8 +557,8 @@ export default {
     const route = useRoute();
     const taskId = computed(() => route.params.id);
 
-    // 展开面板状态
-    const activeNames = ref(["1"]);
+    // 展开面板状态 - 默认展开日志输出面板
+    const activeNames = ref(["4"]);
 
     // 任务详情数据
     const taskDetail = reactive({
@@ -576,6 +579,12 @@ export default {
 
     // 节点列表
     const nodes = ref([]);
+
+    // 解析的iostat指标数据
+    const iostatMetrics = ref([]);
+
+    // iostat图表实例
+    let iostatChartInstance = null;
 
     // 当前任务节点列表（支持多个节点）
     const taskNodes = ref([]);
@@ -692,7 +701,7 @@ export default {
     const initWebSocket = () => {
       console.log("初始化WebSocket连接，任务ID:", taskId.value);
       // 创建WebSocket连接
-      socket.value = io("http://localhost:5001", {
+      socket.value = io("http://localhost:5002", {
         transports: ["websocket"],
         reconnection: true,
         reconnectionAttempts: 5,
@@ -948,40 +957,149 @@ export default {
 
             // 构建IO任务列表
             if (taskIOCases.length > 0) {
-              ioTasks.value = taskIOCases.map((ioCase) => ({
-                id: ioCase.id,
-                name: ioCase.name || "未命名IO任务",
-                type:
-                  ioCase.parameters?.read_write_mode || ioCase.type || "read",
-                status: taskDetail.status || "pending",
-                progress: taskDetail.progress || 0,
-                io_cases: [ioCase],
-              }));
+              ioTasks.value = taskIOCases.map((ioCase) => {
+                // 查找该IO用例的测试结果，获取真实状态
+                const ioCaseResults = testResults.value.filter(
+                  result => result.io_test_case_id === ioCase.id
+                );
+                
+                // 确定IO任务的状态
+                let ioStatus = "pending";
+                if (ioCaseResults.length > 0) {
+                  // 检查是否有失败的结果
+                  const hasFailed = ioCaseResults.some(result => result.status === "failed");
+                  if (hasFailed) {
+                    ioStatus = "failed";
+                  } else {
+                    // 检查是否所有结果都已完成
+                    const allCompleted = ioCaseResults.every(result => result.status === "completed");
+                    if (allCompleted) {
+                      ioStatus = "completed";
+                    } else {
+                      // 检查是否有运行中的结果
+                      const hasRunning = ioCaseResults.some(result => result.status === "running");
+                      if (hasRunning) {
+                        ioStatus = "running";
+                      }
+                    }
+                  }
+                } else if (taskDetail.status === "completed") {
+                  // 如果任务已完成，但没有该IO用例的结果，可能是跳过了
+                  ioStatus = "skipped";
+                } else {
+                  // 否则使用任务状态
+                  ioStatus = taskDetail.status || "pending";
+                }
+                
+                return {
+                  id: ioCase.id,
+                  name: ioCase.name || "未命名IO任务",
+                  type:
+                    ioCase.parameters?.read_write_mode || ioCase.type || "read",
+                  status: ioStatus,
+                  progress: ioCaseResults.length > 0 ? 100 : taskDetail.progress || 0,
+                  io_cases: [ioCase],
+                  results: ioCaseResults
+                };
+              });
             } else {
               // 如果没有找到任何关联的IO测试用例，显示所有IO测试用例
               console.log("没有找到关联的IO测试用例，显示所有IO测试用例");
-              ioTasks.value = allIOCases.map((ioCase) => ({
-                id: ioCase.id,
-                name: ioCase.name || "未命名IO任务",
-                type:
-                  ioCase.parameters?.read_write_mode || ioCase.type || "read",
-                status: taskDetail.status || "pending",
-                progress: taskDetail.progress || 0,
-                io_cases: [ioCase],
-              }));
+              ioTasks.value = allIOCases.map((ioCase) => {
+                // 查找该IO用例的测试结果，获取真实状态
+                const ioCaseResults = testResults.value.filter(
+                  result => result.io_test_case_id === ioCase.id
+                );
+                
+                // 确定IO任务的状态
+                let ioStatus = "pending";
+                if (ioCaseResults.length > 0) {
+                  // 检查是否有失败的结果
+                  const hasFailed = ioCaseResults.some(result => result.status === "failed");
+                  if (hasFailed) {
+                    ioStatus = "failed";
+                  } else {
+                    // 检查是否所有结果都已完成
+                    const allCompleted = ioCaseResults.every(result => result.status === "completed");
+                    if (allCompleted) {
+                      ioStatus = "completed";
+                    } else {
+                      // 检查是否有运行中的结果
+                      const hasRunning = ioCaseResults.some(result => result.status === "running");
+                      if (hasRunning) {
+                        ioStatus = "running";
+                      }
+                    }
+                  }
+                } else if (taskDetail.status === "completed") {
+                  // 如果任务已完成，但没有该IO用例的结果，可能是跳过了
+                  ioStatus = "skipped";
+                } else {
+                  // 否则使用任务状态
+                  ioStatus = taskDetail.status || "pending";
+                }
+                
+                return {
+                  id: ioCase.id,
+                  name: ioCase.name || "未命名IO任务",
+                  type:
+                    ioCase.parameters?.read_write_mode || ioCase.type || "read",
+                  status: ioStatus,
+                  progress: ioCaseResults.length > 0 ? 100 : taskDetail.progress || 0,
+                  io_cases: [ioCase],
+                  results: ioCaseResults
+                };
+              });
             }
           } else {
-            // 如果任务详情中没有IO测试用例ID列表，显示所有IO测试用例
-            console.log("任务详情中没有IO测试用例ID列表，显示所有IO测试用例");
-            ioTasks.value = allIOCases.map((ioCase) => ({
-              id: ioCase.id,
-              name: ioCase.name || "未命名IO任务",
-              type: ioCase.parameters?.read_write_mode || ioCase.type || "read",
-              status: taskDetail.status || "pending",
-              progress: taskDetail.progress || 0,
-              io_cases: [ioCase],
-            }));
-          }
+              // 如果任务详情中没有IO测试用例ID列表，显示所有IO测试用例
+              console.log("任务详情中没有IO测试用例ID列表，显示所有IO测试用例");
+              ioTasks.value = allIOCases.map((ioCase) => {
+                // 查找该IO用例的测试结果，获取真实状态
+                const ioCaseResults = testResults.value.filter(
+                  result => result.io_test_case_id === ioCase.id
+                );
+                
+                // 确定IO任务的状态
+                let ioStatus = "pending";
+                if (ioCaseResults.length > 0) {
+                  // 检查是否有失败的结果
+                  const hasFailed = ioCaseResults.some(result => result.status === "failed");
+                  if (hasFailed) {
+                    ioStatus = "failed";
+                  } else {
+                    // 检查是否所有结果都已完成
+                    const allCompleted = ioCaseResults.every(result => result.status === "completed");
+                    if (allCompleted) {
+                      ioStatus = "completed";
+                    } else {
+                      // 检查是否有运行中的结果
+                      const hasRunning = ioCaseResults.some(result => result.status === "running");
+                      if (hasRunning) {
+                        ioStatus = "running";
+                      }
+                    }
+                  }
+                } else if (taskDetail.status === "completed") {
+                  // 如果任务已完成，但没有该IO用例的结果，可能是跳过了
+                  ioStatus = "skipped";
+                } else {
+                  // 否则使用任务状态
+                  ioStatus = taskDetail.status || "pending";
+                }
+                
+                return {
+                  id: ioCase.id,
+                  name: ioCase.name || "未命名IO任务",
+                  type:
+                    ioCase.parameters?.read_write_mode || ioCase.type || "read",
+                  status: ioStatus,
+                  progress: ioCaseResults.length > 0 ? 100 : taskDetail.progress || 0,
+                  io_cases: [ioCase],
+                  results: ioCaseResults
+                };
+              });
+            }
 
           console.log("最终的IO任务列表:", ioTasks.value);
 
@@ -1119,6 +1237,7 @@ export default {
         pending: "warning",
         cancelled: "danger",
         cancelling: "warning",
+        skipped: "info",
       };
       return types[status] || "info";
     };
@@ -1133,6 +1252,7 @@ export default {
         pending: "待执行",
         cancelled: "已取消",
         cancelling: "取消中",
+        skipped: "已跳过",
       };
       return texts[status] || status;
     };
@@ -1179,10 +1299,10 @@ export default {
         // 加载最新的测试结果
         await loadTestResults();
       } catch (error) {
-        console.error("加载测试结果失败，但仍显示对话框:", error);
+        console.error("加载测试结果失败，但仍跳转页面:", error);
       } finally {
-        // 无论加载结果如何，都显示对话框
-        detailedDataDialogVisible.value = true;
+        // 跳转到结果详情页面
+        router.push(`/results?taskId=${taskId.value}`);
       }
     };
 
@@ -1448,6 +1568,31 @@ export default {
       }
     };
 
+    // 下载任务日志
+    const downloadTaskLogs = async () => {
+      try {
+        ElMessage.info("正在准备下载日志...");
+        // 调用API下载日志
+        const response = await tasksApi.downloadTaskLogs(taskId.value);
+        
+        // 创建下载链接
+        const blob = new Blob([response.data]);
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `task_${taskId.value}_logs.tar.gz`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+        
+        ElMessage.success("日志下载成功");
+      } catch (error) {
+        console.error("下载日志失败:", error);
+        ElMessage.error("下载日志失败: " + error.message);
+      }
+    };
+
     // 优先级类型
     const getPriorityType = (priority) => {
       const types = {
@@ -1466,6 +1611,111 @@ export default {
         low: "低",
       };
       return texts[priority] || priority;
+    };
+
+    // 解析iostat日志行
+    const parseIostatLog = (line) => {
+      try {
+        // iostat -xdm 1 的输出格式示例:
+        // Device:         rrqm/s   wrqm/s     r/s     w/s    rMB/s    wMB/s avgrq-sz avgqu-sz   await r_await w_await  svctm  %util
+        // sda               0.00     0.00    0.00    0.00     0.00     0.00     0.00     0.00    0.00    0.00    0.00   0.00   0.00
+
+        // 跳过标题行和空行
+        if (!line || line.startsWith("Device:") || line.trim() === "") {
+          return null;
+        }
+
+        // 使用正则表达式解析设备数据行
+        // 格式: device_name  rrqm/s  wrqm/s  r/s  w/s  rMB/s  wMB/s  avgrq-sz  avgqu-sz  await  r_await  w_await  svctm  %util
+        const parts = line.trim().split(/\s+/);
+
+        if (parts.length < 14) {
+          return null;
+        }
+
+        const device = parts[0];
+
+        // 提取指标值
+        const readKbps = parseFloat(parts[5]) * 1024; // rMB/s 转换为 KB/s
+        const writeKbps = parseFloat(parts[6]) * 1024; // wMB/s 转换为 KB/s
+        const readIOPS = parseFloat(parts[2]);
+        const writeIOPS = parseFloat(parts[3]);
+        const awaitTime = parseFloat(parts[9]);
+        const svctm = parseFloat(parts[12]);
+        const util = parseFloat(parts[13]);
+
+        // 检查是否为有效数字
+        if (
+          isNaN(readKbps) ||
+          isNaN(writeKbps) ||
+          isNaN(readIOPS) ||
+          isNaN(writeIOPS)
+        ) {
+          return null;
+        }
+
+        const metric = {
+          timestamp: new Date().toISOString(),
+          device: device,
+          read_kbps: readKbps,
+          write_kbps: writeKbps,
+          total_kbps: readKbps + writeKbps,
+          read_iops: readIOPS,
+          write_iops: writeIOPS,
+          total_iops: readIOPS + writeIOPS,
+          await_time: awaitTime,
+          svctm: svctm,
+          util: util,
+        };
+
+        // 添加到指标列表
+        iostatMetrics.value.push(metric);
+
+        // 限制指标数量，防止内存溢出
+        if (iostatMetrics.value.length > 1000) {
+          iostatMetrics.value.shift();
+        }
+
+        console.log("解析iostat指标:", metric);
+        return metric;
+      } catch (error) {
+        console.error("解析iostat日志失败:", error);
+        return null;
+      }
+    };
+
+    // 处理iostat对象数据
+    const processIostatData = (data) => {
+      try {
+        if (data.metrics) {
+          const metric = {
+            timestamp: data.timestamp || new Date().toISOString(),
+            device: data.metrics.device || "unknown",
+            read_kbps: data.metrics.read_kbps || 0,
+            write_kbps: data.metrics.write_kbps || 0,
+            total_kbps:
+              (data.metrics.read_kbps || 0) + (data.metrics.write_kbps || 0),
+            read_iops: data.metrics.read_iops || 0,
+            write_iops: data.metrics.write_iops || 0,
+            total_iops:
+              (data.metrics.read_iops || 0) + (data.metrics.write_iops || 0),
+            await_time: data.metrics.await_time || 0,
+            svctm: data.metrics.svctm || 0,
+            util: data.metrics.util || 0,
+          };
+
+          iostatMetrics.value.push(metric);
+
+          // 限制指标数量，防止内存溢出
+          if (iostatMetrics.value.length > 1000) {
+            iostatMetrics.value.shift();
+          }
+
+          console.log("处理iostat数据:", metric);
+        }
+      } catch (error) {
+        console.error("处理iostat数据失败:", error);
+      }
     };
 
     // 组件卸载时清理WebSocket连接
@@ -1563,6 +1813,12 @@ export default {
       navigateToIOJitterChart,
       // 跳转到IOSTAT性能图表
       navigateToIOStatChart,
+      // iostat指标数据
+      iostatMetrics,
+      // 解析iostat日志函数
+      parseIostatLog,
+      // 处理iostat数据函数
+      processIostatData,
     };
   },
 };

@@ -41,10 +41,17 @@ def create_node():
             if not data.get(field):
                 return error_response(f'{field} 是必需的', 400)
         
+        # 获取登录凭证ID
+        login_credential_id = data.get('login_credential_id')
+        
+        # 如果没有提供登录凭证ID，返回错误信息
+        if not login_credential_id:
+            return error_response('login_credential_id 是必需的', 400)
+        
         node = Node(
             name=data['name'],
             ip_address=data['ip_address'],
-            login_credential_id=data.get('login_credential_id'),  # 改为可选
+            login_credential_id=login_credential_id,
             created_by=current_user_id
         )
         
@@ -54,6 +61,10 @@ def create_node():
         return success_response(node.to_dict(), '节点创建成功', 201)
     except Exception as e:
         db.session.rollback()
+        # 检查是否是唯一性约束错误
+        if 'unique constraint' in str(e).lower() or 'duplicate entry' in str(e).lower():
+            if 'name' in str(e):
+                return error_response('节点名称已存在，请使用其他名称', 400)
         return error_response(f'创建节点失败: {str(e)}', 500)
 
 @nodes_bp.route('/<int:node_id>', methods=['PUT'])

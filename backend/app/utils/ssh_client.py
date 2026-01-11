@@ -7,11 +7,12 @@ from loguru import logger
 class SSHClient:
     """SSH客户端"""
     
-    def __init__(self, login_credential):
+    def __init__(self, login_credential, hostname=None):
         self.login_credential = login_credential
         self.client = None
         self.connected = False
         self._private_key_file = None
+        self._hostname = hostname or login_credential.host
     
     def connect(self, timeout=30):
         """建立SSH连接"""
@@ -20,7 +21,7 @@ class SSHClient:
             self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             
             connect_kwargs = {
-                'hostname': self.login_credential.host,
+                'hostname': self._hostname,
                 'port': self.login_credential.port,
                 'username': self.login_credential.username,
                 'timeout': timeout
@@ -81,6 +82,7 @@ class SSHClient:
                 return False, "Connection failed"
         
         try:
+            logger.info(f"[SSH执行命令] 主机: {self._hostname}, 命令: {command}")
             stdin, stdout, stderr = self.client.exec_command(command, timeout=timeout)
             
             stdout_data = stdout.read().decode().strip()
@@ -88,12 +90,20 @@ class SSHClient:
             exit_status = stdout.channel.recv_exit_status()
             
             if exit_status == 0:
+                logger.info(f"[SSH命令执行成功] 主机: {self._hostname}, 退出码: {exit_status}")
+                if stdout_data:
+                    logger.info(f"[SSH命令结果] 主机: {self._hostname}, 输出:\n{stdout_data}")
                 return True, stdout_data
             else:
+                logger.warning(f"[SSH命令执行失败] 主机: {self._hostname}, 退出码: {exit_status}")
+                if stderr_data:
+                    logger.warning(f"[SSH命令错误] 主机: {self._hostname}, 错误:\n{stderr_data}")
+                elif stdout_data:
+                    logger.warning(f"[SSH命令输出] 主机: {self._hostname}, 输出:\n{stdout_data}")
                 return False, stderr_data or stdout_data or f"Command failed with exit code {exit_status}"
                 
         except Exception as e:
-            logger.error(f"Command execution failed: {e}")
+            logger.error(f"命令执行失败: 主机: {self._hostname}, 错误: {e}")
             return False, str(e)
     
     def upload_file(self, local_path, remote_path):

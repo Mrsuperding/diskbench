@@ -25,19 +25,21 @@ def get_dashboard_stats():
         # 最近7天完成的任务数
         recent_completed_tasks = TestTask.query.filter(
             TestTask.status == 'completed',
+            TestTask.completed_at.isnot(None),
             TestTask.completed_at >= seven_days_ago
         ).count()
         
         # 节点统计
         total_nodes = Node.query.count()
-        online_nodes = Node.query.filter_by(status='online').count()
-        offline_nodes = Node.query.filter_by(status='offline').count()
+        online_nodes = Node.query.filter_by(status='active').count()
+        offline_nodes = Node.query.filter_by(status='inactive').count()
         
         # 测试结果统计
         total_results = TestResult.query.count()
         
         # 最近7天的测试结果数
         recent_results = TestResult.query.filter(
+            TestResult.created_at.isnot(None),
             TestResult.created_at >= seven_days_ago
         ).count()
         
@@ -69,7 +71,9 @@ def get_dashboard_stats():
         
         return success_response(stats)
     except Exception as e:
-        return error_response(f'获取仪表盘统计数据失败: {str(e)}', 500)
+        import traceback
+        error_msg = f'获取仪表盘统计数据失败: {str(e)}\n{traceback.format_exc()}'
+        return error_response(error_msg, 500)
 
 @dashboard_bp.route('/recent-tasks', methods=['GET'])
 @jwt_required()

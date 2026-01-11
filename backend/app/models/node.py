@@ -8,8 +8,10 @@ class Node(db.Model):
     
     id = db.Column(db.Integer, primary_key=True, autoincrement=True, comment='节点ID')
     name = db.Column(db.String(100), unique=True, nullable=False, comment='节点名称')
-    ip_address = db.Column(db.String(50), unique=True, nullable=False, comment='IP地址')
+    ip_address = db.Column(db.String(50), nullable=False, comment='IP地址')  # 移除unique约束，允许IP重复
     status = db.Column(db.Enum('active', 'inactive', 'maintenance', 'error'), default='inactive', comment='节点状态')
+    # type字段暂时注释掉，因为数据库中不存在该字段
+    # type = db.Column(db.Enum('master', 'worker'), default='worker', nullable=False, comment='节点类型')
     os_type = db.Column(db.String(50), comment='操作系统类型')
     os_version = db.Column(db.String(100), comment='操作系统版本')
     cpu_info = db.Column(db.String(255), comment='CPU信息')
@@ -58,7 +60,7 @@ class Node(db.Model):
             'io_partitions': self.io_partitions or [],
             # 确保返回前端需要的字段
             'port': 8000,  # 默认端口
-            'type': 'worker',  # 默认节点类型
+            'type': 'worker',  # 默认节点类型，不依赖数据库字段
             'description': '',  # 默认描述
         }
     

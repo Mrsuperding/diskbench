@@ -47,6 +47,31 @@ def create_app(config_name=None):
     )
     app.logger.setLevel(getattr(logging, app.config['LOG_LEVEL']))
     app.logger.info('IO Platform startup')
+
+    # 彻底禁用所有SQLAlchemy相关日志（包括DEBUG级别的SQL语句打印）
+    logging.getLogger('sqlalchemy').setLevel(logging.WARNING)
+    logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
+    logging.getLogger('sqlalchemy.engine.base.Engine').setLevel(logging.WARNING)
+    logging.getLogger('sqlalchemy.pool').setLevel(logging.WARNING)
+    logging.getLogger('sqlalchemy.pool.impl.QueuePool').setLevel(logging.WARNING)
+    logging.getLogger('sqlalchemy.dialects').setLevel(logging.WARNING)
+    logging.getLogger('sqlalchemy.orm').setLevel(logging.WARNING)
+    logging.getLogger('sqlalchemy.orm.attributes').setLevel(logging.WARNING)
+    logging.getLogger('sqlalchemy.orm.mapper').setLevel(logging.WARNING)
+    logging.getLogger('sqlalchemy.util').setLevel(logging.WARNING)
+
+    # 禁用SQLAlchemy的echo和日志打印
+    import sqlalchemy
+    if hasattr(sqlalchemy, 'set_engine_options'):
+        sqlalchemy.set_engine_options(None, echo=False, echo_pool=False)
+
+    # 禁用loguru中与SQLAlchemy相关的日志
+    try:
+        from loguru import logger
+        logger.disable('sqlalchemy')
+        logger.disable('sqlalchemy.engine')
+    except ImportError:
+        pass
     
     # 初始化扩展
     db.init_app(app)
@@ -157,4 +182,4 @@ if __name__ == '__main__':
             sys.exit(0)
     
     # 使用SocketIO运行应用
-    socketio.run(app, debug=True, host='0.0.0.0', port=5001, use_reloader=False)
+    socketio.run(app, debug=True, host='0.0.0.0', port=5002, use_reloader=False)

@@ -52,6 +52,20 @@ export default {
     return request.get(`/tasks/${taskId}/logs`, { params });
   },
 
+  // 打包任务日志
+  packageTaskLogs(taskId) {
+    return request.post(`/tasks/${taskId}/logs/package`);
+  },
+
+  // 下载任务日志
+  downloadTaskLogs(taskId) {
+    return request({
+      url: `/tasks/${taskId}/logs/download`,
+      method: "get",
+      responseType: "blob", // 重要：设置响应类型为blob
+    });
+  },
+
   // 获取IOSTAT指标数据
   getIOStatMetrics(logId, params) {
     return request({

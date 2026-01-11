@@ -50,6 +50,9 @@ class Config:
     UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER') or 'uploads'
     MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
     
+    # 本地数据存储配置
+    LOCAL_DATA_DIR = os.environ.get('LOCAL_DATA_DIR') or './local_data'
+    
     # 日志配置
     LOG_LEVEL = os.environ.get('LOG_LEVEL') or 'INFO'
     LOG_FILE = os.environ.get('LOG_FILE') or 'app.log'
