@@ -179,10 +179,10 @@ class SSHClient:
         try:
             commands = {
                 'hostname': 'hostname',
-                'os_info': 'cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2 | tr -d \'"\'',
+                'os_info': "cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"'",
                 'kernel': 'uname -r',
                 'cpu_count': 'nproc',
-                'memory_total': 'free -b | grep Mem | awk \'{print $2}\'',
+                'memory_total': "free -b | grep Mem | awk '{print $2}'",
                 'disk_info': 'df -h / | tail -1'
             }
             
@@ -261,6 +261,9 @@ class SSHClient:
             ratio = process_read_write_ratio(params.get('read_write_ratio'))
             if ratio is not None:
                 parts.append(f'--rwmixread={ratio}')
+            else:
+                # 默认读写比例：70%读，30%写
+                parts.append('--rwmixread=70')
             
             # 处理用户定义的参数
             for key, value in params.items():
@@ -301,6 +304,11 @@ class SSHClient:
             # 添加默认numjobs=1（如果用户未指定）
             if not any('--numjobs=' in part for part in parts):
                 parts.append('--numjobs=1')
+            
+            # 处理time_based选项
+            time_based = params.get('time_based', False)
+            if time_based:
+                parts.append('--time_based=1')
             
             # 添加默认runtime=30（如果用户未指定）
             if not any('--runtime=' in part for part in parts):

@@ -1459,10 +1459,10 @@ export default {
           status: ioTaskForm.status,
         };
 
-        // 这里需要调用API更新IO任务
-        // await tasksApi.updateIOTask(editingIOTask.value.id, taskData)
+        // 调用API更新IO测试用例
+        await ioCasesApi.updateIOCase(editingIOTask.value.id, taskData);
 
-        // 暂时使用本地数据更新
+        // 更新本地数据
         const index = ioTasks.value.findIndex(
           (t) => t.id === editingIOTask.value.id,
         );

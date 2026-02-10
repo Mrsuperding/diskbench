@@ -56,6 +56,7 @@ class Config:
     # 日志配置
     LOG_LEVEL = os.environ.get('LOG_LEVEL') or 'INFO'
     LOG_FILE = os.environ.get('LOG_FILE') or 'app.log'
+    LOG_STORAGE_DIR = os.environ.get('LOG_STORAGE_DIR') or './logs/io_platform'
     
     # 应用配置
     APP_NAME = 'IO Performance Testing Platform'

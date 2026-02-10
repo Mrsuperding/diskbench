@@ -23,8 +23,15 @@ class LogCollector:
         log_base_dir = app.config.get('LOG_STORAGE_DIR', '/tmp/io_platform_logs')
         # 规范化路径，统一使用正斜杠
         self.log_base_dir = log_base_dir.replace('\\', '/')
+        # 确保日志目录存在，递归创建
         os.makedirs(self.log_base_dir, exist_ok=True)
-        logger.info(f"日志收集器初始化完成，日志存储目录: {self.log_base_dir}")
+        # 验证目录权限
+        if os.access(self.log_base_dir, os.W_OK):
+            logger.info(f"日志收集器初始化完成，日志存储目录: {self.log_base_dir}")
+            logger.info(f"目录权限检查: 可写")
+        else:
+            logger.warning(f"日志目录权限不足: {self.log_base_dir}")
+            logger.warning(f"目录权限检查: 不可写")
     
     def collect_iostat_log(self, ssh_client, task_id, execution_id, node_id, io_test_case_id, remote_log_path):
         """收集iostat日志"""
@@ -341,7 +348,66 @@ class LogCollector:
                     break
             
             if header_index is None:
+                # 尝试其他可能的格式
+                for i, line in enumerate(lines):
+                    if 'Device' in line and 'rrqm/s' in line:
+                        header_index = i
+                        break
+            
+            if header_index is None:
                 logger.warning(f"iostat日志格式不正确，未找到设备行: {log_path}")
+                # 尝试解析所有非空行
+                for i, line in enumerate(lines):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if ':' in line or 'Device' in line:
+                        continue
+                    parts = line.split()
+                    if len(parts) >= 10:
+                        try:
+                            device = parts[0]
+                            # 尝试不同的字段位置
+                            read_kbps = 0
+                            write_kbps = 0
+                            read_iops = 0
+                            write_iops = 0
+                            await_time = 0
+                            svctm = 0
+                            util = 0
+                            
+                            # 尝试不同的字段索引
+                            if len(parts) >= 14:
+                                # 标准格式
+                                read_kbps = float(parts[5]) * 1024
+                                write_kbps = float(parts[6]) * 1024
+                                read_iops = float(parts[2])
+                                write_iops = float(parts[3])
+                                await_time = float(parts[9])
+                                svctm = float(parts[12])
+                                util = float(parts[13])
+                            elif len(parts) >= 10:
+                                # 简化格式
+                                read_iops = float(parts[2]) if len(parts) > 2 else 0
+                                write_iops = float(parts[3]) if len(parts) > 3 else 0
+                                read_kbps = float(parts[5]) * 1024 if len(parts) > 5 else 0
+                                write_kbps = float(parts[6]) * 1024 if len(parts) > 6 else 0
+                                await_time = float(parts[7]) if len(parts) > 7 else 0
+                                util = float(parts[9]) if len(parts) > 9 else 0
+                            
+                            metrics.append({
+                                'timestamp': datetime.now(),
+                                'device': device,
+                                'read_kbps': read_kbps,
+                                'write_kbps': write_kbps,
+                                'read_iops': read_iops,
+                                'write_iops': write_iops,
+                                'await_time': await_time,
+                                'svctm': svctm,
+                                'util': util
+                            })
+                        except:
+                            continue
                 return metrics
             
             # 获取当前时间，用于计算采集时间戳
@@ -366,21 +432,52 @@ class LogCollector:
                 
                 # 解析设备数据行
                 parts = line.split()
-                if len(parts) < 14:
+                if len(parts) < 10:
                     continue
                 
-                device = parts[0]
-                metrics.append({
-                    'timestamp': current_time - datetime.timedelta(seconds=len(lines[header_index+1:])-i),
-                    'device': device,
-                    'read_kbps': float(parts[5]) * 1024,  # 转换为KB/s
-                    'write_kbps': float(parts[6]) * 1024,  # 转换为KB/s
-                    'read_iops': float(parts[2]),
-                    'write_iops': float(parts[3]),
-                    'await_time': float(parts[9]),
-                    'svctm': float(parts[12]),
-                    'util': float(parts[13])
-                })
+                try:
+                    device = parts[0]
+                    # 尝试不同的字段位置
+                    read_kbps = 0
+                    write_kbps = 0
+                    read_iops = 0
+                    write_iops = 0
+                    await_time = 0
+                    svctm = 0
+                    util = 0
+                    
+                    # 标准格式
+                    if len(parts) >= 14:
+                        read_kbps = float(parts[5]) * 1024  # 转换为KB/s
+                        write_kbps = float(parts[6]) * 1024  # 转换为KB/s
+                        read_iops = float(parts[2])
+                        write_iops = float(parts[3])
+                        await_time = float(parts[9])
+                        svctm = float(parts[12])
+                        util = float(parts[13])
+                    elif len(parts) >= 10:
+                        # 简化格式
+                        read_iops = float(parts[2]) if len(parts) > 2 else 0
+                        write_iops = float(parts[3]) if len(parts) > 3 else 0
+                        read_kbps = float(parts[5]) * 1024 if len(parts) > 5 else 0
+                        write_kbps = float(parts[6]) * 1024 if len(parts) > 6 else 0
+                        await_time = float(parts[7]) if len(parts) > 7 else 0
+                        util = float(parts[9]) if len(parts) > 9 else 0
+                    
+                    metrics.append({
+                        'timestamp': current_time - datetime.timedelta(seconds=len(lines[header_index+1:])-i),
+                        'device': device,
+                        'read_kbps': read_kbps,
+                        'write_kbps': write_kbps,
+                        'read_iops': read_iops,
+                        'write_iops': write_iops,
+                        'await_time': await_time,
+                        'svctm': svctm,
+                        'util': util
+                    })
+                except Exception as e:
+                    logger.warning(f"解析iostat行失败: {e}, 行内容: {line}")
+                    continue
             
             logger.info(f"成功解析iostat日志，共解析{len(metrics)}条指标: {log_path}")
             
@@ -998,7 +1095,19 @@ class LogCollector:
                                     # 尝试提取最大延迟
                                     lat_max_match = re.search(r'clat \(nsec\):.*?max=(.*?),', content, re.DOTALL)
                                     if lat_max_match:
-                                        lat_max = float(lat_max_match.group(1).strip()) / 1000000  # 转换为毫秒
+                                        lat_max_str = lat_max_match.group(1).strip()
+                                        # 处理带有单位的延迟值
+                                        lat_max_val = 0
+                                        if lat_max_str.endswith('k'):
+                                            lat_max_val = float(lat_max_str[:-1]) * 1000
+                                        elif lat_max_str.endswith('m'):
+                                            lat_max_val = float(lat_max_str[:-1]) * 1000000
+                                        else:
+                                            try:
+                                                lat_max_val = float(lat_max_str)
+                                            except:
+                                                lat_max_val = 0
+                                        lat_max = lat_max_val / 1000000  # 转换为毫秒
                             except Exception as e:
                                 logger.warning(f"提取最大延迟失败: {e}")
                             
