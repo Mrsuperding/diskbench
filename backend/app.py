@@ -180,6 +180,68 @@ if __name__ == '__main__':
                 print(f'邮箱: {admin.email}')
             
             sys.exit(0)
+        
+        # 检查测试任务的FIO日志记录
+        if len(sys.argv) > 2 and sys.argv[1] == '--check-logs-for-task':
+            from app.models import TestLog
+            import os
+            
+            # 获取任务ID
+            task_id = int(sys.argv[2])
+            
+            # 查询任务的所有FIO日志记录
+            logs = TestLog.query.filter_by(test_task_id=task_id, log_type='fio').all()
+            print('Found', len(logs), 'FIO logs for task', task_id)
+            
+            for log in logs:
+                print('\nLog ID:', log.id)
+                print('Node ID:', log.node_id)
+                print('Log path:', log.log_path)
+                print('Log filename:', log.log_filename)
+                print('File exists:', os.path.exists(log.log_path))
+                
+                # 如果文件存在，检查文件大小
+                if os.path.exists(log.log_path):
+                    print('File size:', os.path.getsize(log.log_path), 'bytes')
+                else:
+                    print('File does not exist!')
+            
+            # 查询任务的所有日志记录（包括iostat）
+            all_logs = TestLog.query.filter_by(test_task_id=task_id).all()
+            print('\nAll logs for task', task_id, ':', len(all_logs))
+            for log in all_logs:
+                print(f'ID: {log.id}, Type: {log.log_type}, Node: {log.node_id}, File: {log.log_filename}')
+            
+            sys.exit(0)
+        
+        # 检查测试任务32的FIO日志记录
+        if len(sys.argv) > 1 and sys.argv[1] == '--check-logs':
+            from app.models import TestLog
+            import os
+            
+            # 查询任务32的所有FIO日志记录
+            logs = TestLog.query.filter_by(test_task_id=32, log_type='fio').all()
+            print('Found', len(logs), 'FIO logs for task 32')
+            
+            for log in logs:
+                print('\nLog ID:', log.id)
+                print('Node ID:', log.node_id)
+                print('Log path:', log.log_path)
+                print('Log filename:', log.log_filename)
+                print('File exists:', os.path.exists(log.log_path))
+                
+                # 如果文件存在，检查文件大小和完整内容
+                if os.path.exists(log.log_path):
+                    print('File size:', os.path.getsize(log.log_path), 'bytes')
+                    try:
+                        with open(log.log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()
+                            print('File content:')
+                            print(content)
+                    except Exception as e:
+                        print('Error reading file:', e)
+            
+            sys.exit(0)
     
     # 使用SocketIO运行应用
-    socketio.run(app, debug=True, host='0.0.0.0', port=5002, use_reloader=False)
+    socketio.run(app, debug=True, host='0.0.0.0', port=5003, use_reloader=False)

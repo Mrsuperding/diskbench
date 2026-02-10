@@ -322,6 +322,20 @@ class SSHClient:
         else:
             io_types = ['read']  # 默认读写模式
         
+        # 验证并修正读写模式参数
+        valid_rw_modes = ['read', 'write', 'randread', 'randwrite', 'rw', 'readwrite', 'randrw']
+        corrected_io_types = []
+        for io in io_types:
+            if io in valid_rw_modes:
+                corrected_io_types.append(io)
+            elif io == 'randrwrite':
+                # 修正常见错误
+                corrected_io_types.append('randrw')
+            else:
+                # 使用默认值
+                corrected_io_types.append('read')
+        io_types = corrected_io_types
+        
         # 获取队列深度列表
         queue_depth = fio_params.get('queue_depth')
         queue_depths = []

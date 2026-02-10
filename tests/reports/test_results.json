@@ -1,0 +1,14 @@
+{
+  "tests/test_case/test_auth.py::TestAuth::test_register_login_logout": {
+    "setup": {
+      "outcome": "passed",
+      "duration": 21.445406499988167,
+      "longrepr": null
+    },
+    "call": {
+      "outcome": "failed",
+      "duration": 21.853168400004506,
+      "longrepr": "tests\\test_case\\test_auth.py:42: in test_register_login_logout\n    WebDriverWait(driver, 20).until(EC.url_contains(\"/login\"))\nC:\\Users\\dinghaiqiang\\AppData\\Roaming\\Python\\Python314\\site-packages\\selenium\\webdriver\\support\\wait.py:122: in until\n    raise TimeoutException(message, screen, stacktrace)\nE   selenium.common.exceptions.TimeoutException: Message:"
+    }
+  }
+}

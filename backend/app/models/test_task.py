@@ -60,7 +60,28 @@ class TestTask(db.Model):
             if node:
                 nodes.append({
                     'id': node.id,
-                    'name': node.name
+                    'name': node.name,
+                    'ip_address': node.ip_address,
+                    'io_partitions': node.io_partitions
+                })
+        
+        # 计算总耗时
+        total_duration = None
+        if self.started_at and self.completed_at:
+            total_duration = int((self.completed_at - self.started_at).total_seconds())
+        
+        # 获取测试用例数量
+        test_case_count = len(io_test_case_ids)
+        
+        # 获取测试用例信息
+        from app.models import IOTestCase
+        io_test_cases = []
+        for case_id in io_test_case_ids:
+            case = IOTestCase.query.get(case_id)
+            if case:
+                io_test_cases.append({
+                    'id': case.id,
+                    'name': case.name
                 })
         
         return {
@@ -70,12 +91,16 @@ class TestTask(db.Model):
             'node_ids': node_ids,
             'nodes': nodes,  # 返回完整的节点信息
             'io_test_case_ids': io_test_case_ids,
+            'io_test_cases': io_test_cases,  # 返回测试用例信息
             'task_space_id': self.task_space_id,
             'status': self.status,
             'priority': self.priority,
             'scheduled_at': self.scheduled_at.isoformat() if self.scheduled_at else None,
             'started_at': self.started_at.isoformat() if self.started_at else None,
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
+            'total_duration': total_duration,
+            'node_count': len(nodes),
+            'test_case_count': test_case_count,
             'created_by': self.created_by,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,

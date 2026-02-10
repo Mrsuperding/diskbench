@@ -4,7 +4,7 @@
 import logging
 from flask import request
 from flask_socketio import emit, join_room, leave_room
-from app.models import TaskExecution
+from app.models import TaskExecution, TestTask
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -52,8 +52,8 @@ def register_socket_events(socketio):
         
         try:
             # 验证任务是否存在
-            task_execution = TaskExecution.query.filter_by(test_task_id=task_id).first()
-            if not task_execution:
+            task = TestTask.query.get(task_id)
+            if not task:
                 emit('error', {'message': '任务不存在'})
                 return
             

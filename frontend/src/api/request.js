@@ -31,6 +31,11 @@ service.interceptors.request.use(
 // 响应拦截器
 service.interceptors.response.use(
   (response) => {
+    // 如果是blob类型的响应，直接返回原始响应对象
+    if (response.config.responseType === 'blob') {
+      return response;
+    }
+
     const { code, message, data, success } = response.data;
 
     // 检查HTTP状态码是否为成功状态

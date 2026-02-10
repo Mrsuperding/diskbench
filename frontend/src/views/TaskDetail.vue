@@ -701,7 +701,7 @@ export default {
     const initWebSocket = () => {
       console.log("初始化WebSocket连接，任务ID:", taskId.value);
       // 创建WebSocket连接
-      socket.value = io("http://localhost:5002", {
+      socket.value = io("http://localhost:5003", {
         transports: ["websocket"],
         reconnection: true,
         reconnectionAttempts: 5,

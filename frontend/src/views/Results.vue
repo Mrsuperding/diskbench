@@ -37,6 +37,9 @@
                 <el-descriptions-item label="创建时间">{{
                   formatDate(taskInfo.created_at)
                 }}</el-descriptions-item>
+                <el-descriptions-item label="开始执行时间">{{
+                  formatDate(taskInfo.started_at)
+                }}</el-descriptions-item>
                 <el-descriptions-item label="完成时间">{{
                   formatDate(taskInfo.completed_at)
                 }}</el-descriptions-item>
@@ -44,7 +47,7 @@
                   getStatusLabel(taskInfo.status)
                 }}</el-descriptions-item>
                 <el-descriptions-item label="总耗时">{{
-                  taskInfo.total_duration || "-"
+                  taskInfo.total_duration ? `${taskInfo.total_duration}秒` : "-"
                 }}</el-descriptions-item>
                 <el-descriptions-item label="节点数量">{{
                   taskInfo.node_count || 0
@@ -52,6 +55,14 @@
                 <el-descriptions-item label="测试用例">{{
                   taskInfo.test_case_count || 0
                 }}</el-descriptions-item>
+                <el-descriptions-item label="测试用例列表">
+                  <div v-if="taskInfo.io_test_cases && taskInfo.io_test_cases.length > 0">
+                    <el-tag v-for="testCase in taskInfo.io_test_cases" :key="testCase.id" size="small" style="margin-right: 5px; margin-bottom: 5px;">
+                      {{ testCase.name }}
+                    </el-tag>
+                  </div>
+                  <span v-else>-</span>
+                </el-descriptions-item>
               </el-descriptions>
             </div>
           </el-tab-pane>
@@ -68,7 +79,7 @@
                 <el-option
                   v-for="node in taskNodes"
                   :key="node.id"
-                  :label="node.name"
+                  :label="node.ip_address"
                   :value="node.id"
                 ></el-option>
               </el-select>
@@ -131,15 +142,6 @@
                     >
                       下载
                     </el-button>
-                    <el-button
-                      v-if="scope.row.log_type === 'iostat'"
-                      type="warning"
-                      size="small"
-                      @click="viewJitterChart(scope.row.id)"
-                      style="margin-left: 10px"
-                    >
-                      抖动分析
-                    </el-button>
                   </template>
                 </el-table-column>
               </el-table>
@@ -160,7 +162,7 @@
                 <el-option
                   v-for="node in taskNodes"
                   :key="node.id"
-                  :label="node.name"
+                  :label="node.ip_address"
                   :value="node.id"
                 ></el-option>
               </el-select>
@@ -273,6 +275,7 @@
 <script setup>
 import { ref, reactive, onMounted, computed, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { ElMessage } from "element-plus";
 import { getTaskLogs, getIOStatMetrics, getRealtimeMetrics, downloadLog, getFioMetricsFromLogs } from "@/api/logs";
 import tasksApi from "@/api/tasks";
 import localDataManager from "@/utils/localDataManager";
@@ -337,21 +340,61 @@ const loadTaskInfo = async () => {
     }
   } catch (error) {
     console.error("加载任务信息失败:", error);
-    // 尝试从本地获取数据
-    const localData = localDataManager.getTaskData(taskId.value);
-    if (localData) {
-      Object.assign(taskInfo, localData);
-      if (localData.nodes) {
-        taskNodes.value = localData.nodes;
-        taskInfo.node_count = localData.nodes.length;
-        if (taskNodes.value.length > 0) {
-          // 设置默认选中所有节点
-          selectedNodes.value = taskNodes.value.map(node => node.id);
-          selectedNode.value = taskNodes.value[0].id;
-          loadTaskLogs();
-          // 加载可用设备
-          await loadAvailableDevices();
+    
+    // 检查是否是任务不存在的错误
+    if (error.response && error.response.status === 404) {
+      ElMessage.error(`任务 ${taskId.value} 不存在或已被删除`);
+      // 清空任务信息
+      Object.assign(taskInfo, {
+        id: taskId.value,
+        name: "任务不存在",
+        created_at: "",
+        completed_at: "",
+        status: "error",
+        total_duration: "",
+        node_count: 0,
+        test_case_count: 0,
+      });
+      taskNodes.value = [];
+      selectedNodes.value = [];
+      selectedDevices.value = [];
+      availableDevices.value = [];
+      displayedData.value = [];
+    } else {
+      // 尝试从本地获取数据
+      const localData = localDataManager.getTaskData(taskId.value);
+      if (localData) {
+        Object.assign(taskInfo, localData);
+        if (localData.nodes) {
+          taskNodes.value = localData.nodes;
+          taskInfo.node_count = localData.nodes.length;
+          if (taskNodes.value.length > 0) {
+            // 设置默认选中所有节点
+            selectedNodes.value = taskNodes.value.map(node => node.id);
+            selectedNode.value = taskNodes.value[0].id;
+            loadTaskLogs();
+            // 加载可用设备
+            await loadAvailableDevices();
+          }
         }
+      } else {
+        ElMessage.error("加载任务信息失败，请稍后重试");
+        // 清空任务信息
+        Object.assign(taskInfo, {
+          id: taskId.value,
+          name: "加载失败",
+          created_at: "",
+          completed_at: "",
+          status: "error",
+          total_duration: "",
+          node_count: 0,
+          test_case_count: 0,
+        });
+        taskNodes.value = [];
+        selectedNodes.value = [];
+        selectedDevices.value = [];
+        availableDevices.value = [];
+        displayedData.value = [];
       }
     }
   } finally {
@@ -365,32 +408,69 @@ const loadAvailableDevices = async () => {
     // 从任务信息中获取节点的分区信息
     if (taskInfo && taskInfo.nodes) {
       const devices = new Set();
-      // 从节点列表中获取所有分区
-      taskInfo.nodes.forEach(node => {
-        // 首先检查是否有io_partitions字段（实际存储分区信息的地方）
-        if (node.io_partitions && Array.isArray(node.io_partitions)) {
-          node.io_partitions.forEach(partition => {
-            if (typeof partition === 'string') {
-              // 如果是字符串形式，直接添加
-              devices.add(partition);
-            } else if (partition && partition.path) {
-              // 如果是对象形式，从path中提取设备名
-              const deviceName = partition.path.split('/').pop();
-              devices.add(deviceName);
-            } else if (partition && partition.device_name) {
-              // 如果有明确的device_name字段
-              devices.add(partition.device_name);
-            }
-          });
-        } else if (node.node_info && node.node_info.partitions) {
-          // 备用方案：从node_info.partitions中获取
-          node.node_info.partitions.forEach(partition => {
-            if (partition.device_name) {
-              devices.add(partition.device_name);
-            }
-          });
-        }
-      });
+      
+      // 如果有选中的节点，只显示选中节点的分区
+      if (selectedNodes.value && selectedNodes.value.length > 0) {
+        // 过滤出选中的节点
+        const selectedTaskNodes = taskInfo.nodes.filter(node => 
+          selectedNodes.value.includes(node.id)
+        );
+        
+        // 从选中的节点中获取分区
+        selectedTaskNodes.forEach(node => {
+          // 首先检查是否有io_partitions字段（实际存储分区信息的地方）
+          if (node.io_partitions && Array.isArray(node.io_partitions)) {
+            node.io_partitions.forEach(partition => {
+              if (typeof partition === 'string') {
+                // 如果是字符串形式，直接添加
+                devices.add(partition);
+              } else if (partition && partition.path) {
+                // 如果是对象形式，从path中提取设备名
+                const deviceName = partition.path.split('/').pop();
+                devices.add(deviceName);
+              } else if (partition && partition.device_name) {
+                // 如果有明确的device_name字段
+                devices.add(partition.device_name);
+              }
+            });
+          } else if (node.node_info && node.node_info.partitions) {
+            // 备用方案：从node_info.partitions中获取
+            node.node_info.partitions.forEach(partition => {
+              if (partition.device_name) {
+                devices.add(partition.device_name);
+              }
+            });
+          }
+        });
+      } else {
+        // 没有选中节点时，显示所有节点的分区
+        // 从节点列表中获取所有分区
+        taskInfo.nodes.forEach(node => {
+          // 首先检查是否有io_partitions字段（实际存储分区信息的地方）
+          if (node.io_partitions && Array.isArray(node.io_partitions)) {
+            node.io_partitions.forEach(partition => {
+              if (typeof partition === 'string') {
+                // 如果是字符串形式，直接添加
+                devices.add(partition);
+              } else if (partition && partition.path) {
+                // 如果是对象形式，从path中提取设备名
+                const deviceName = partition.path.split('/').pop();
+                devices.add(deviceName);
+              } else if (partition && partition.device_name) {
+                // 如果有明确的device_name字段
+                devices.add(partition.device_name);
+              }
+            });
+          } else if (node.node_info && node.node_info.partitions) {
+            // 备用方案：从node_info.partitions中获取
+            node.node_info.partitions.forEach(partition => {
+              if (partition.device_name) {
+                devices.add(partition.device_name);
+              }
+            });
+          }
+        });
+      }
       
       if (devices.size > 0) {
         availableDevices.value = Array.from(devices);
@@ -430,6 +510,16 @@ const loadAvailableDevices = async () => {
 
 // 从FIO日志文件获取数据
 const loadFioMetricsFromLogs = async () => {
+  if (selectedNodes.value.length === 0) {
+    ElMessage.warning('请先选择节点');
+    return;
+  }
+  
+  if (selectedDevices.value.length === 0) {
+    ElMessage.warning('请先选择分区');
+    return;
+  }
+  
   loading.value = true;
   try {
     // 将数组参数转换为逗号分隔的字符串格式
@@ -438,22 +528,30 @@ const loadFioMetricsFromLogs = async () => {
       devices: selectedDevices.value.join(',')
     };
     
+    console.log('加载FIO日志数据，参数:', params);
+    
     // 调用API从FIO日志文件获取数据
     const response = await getFioMetricsFromLogs(taskId.value, params);
     
+    console.log('FIO日志数据加载完成，响应:', response);
+    
     if (response && response.data) {
       rawIOStatData.value = response.data;
+      console.log('FIO日志数据:', rawIOStatData.value);
       updateDataTable();
+      ElMessage.success(`成功加载 ${response.data.length} 条数据`);
     } else {
       // 确保数据为空时也能正确更新表格
       rawIOStatData.value = [];
       updateDataTable();
+      ElMessage.info('未找到数据');
     }
   } catch (error) {
     console.error("加载FIO日志数据失败:", error);
     // 失败时使用空数据，避免显示错误数据
     rawIOStatData.value = [];
     updateDataTable();
+    ElMessage.error('加载数据失败，请重试');
   } finally {
     loading.value = false;
   }
@@ -617,12 +715,46 @@ const updateDataTable = () => {
     );
   }
 
-  // 直接展示原始数据，不自动分组汇总，保留每个节点和分区的详细信息
-  displayedData.value = filteredData.map((item) => {
-    // 计算总IOPS和总吞吐量
-    const total_iops = parseFloat(item.read_iops || 0) + parseFloat(item.write_iops || 0);
-    const total_kbps = parseFloat(item.read_kbps || 0) + parseFloat(item.write_kbps || 0);
+  // 按IO模型名称分组，实现多个分区的IOPS和带宽相加
+  const aggregatedData = {};
+  
+  filteredData.forEach((item) => {
+    const key = item.io_model_name || '未知IO模型';
+    if (!aggregatedData[key]) {
+      aggregatedData[key] = {
+        io_model_name: key,
+        io_start_time: item.io_start_time,
+        io_end_time: item.io_end_time,
+        devices: [],
+        total_iops: 0,
+        total_kbps: 0,
+        await_time: 0,
+        read_iops: 0,
+        write_iops: 0,
+        read_kbps: 0,
+        write_kbps: 0,
+        lat_p99: 0,
+        lat_max: 0,
+        count: 0
+      };
+    }
     
+    // 累加指标
+    aggregatedData[key].total_iops += parseFloat(item.read_iops || 0) + parseFloat(item.write_iops || 0);
+    aggregatedData[key].total_kbps += parseFloat(item.read_kbps || 0) + parseFloat(item.write_kbps || 0);
+    aggregatedData[key].read_iops += parseFloat(item.read_iops || 0);
+    aggregatedData[key].write_iops += parseFloat(item.write_iops || 0);
+    aggregatedData[key].read_kbps += parseFloat(item.read_kbps || 0);
+    aggregatedData[key].write_kbps += parseFloat(item.write_kbps || 0);
+    aggregatedData[key].await_time += parseFloat(item.await_time || 0);
+    aggregatedData[key].lat_p99 += parseFloat(item.lat_p99 || 0);
+    aggregatedData[key].lat_max = Math.max(aggregatedData[key].lat_max, parseFloat(item.lat_max || 0));
+    aggregatedData[key].devices.push(item.device);
+    aggregatedData[key].count++;
+  });
+  
+  // 转换为数组并计算平均值
+  displayedData.value = Object.values(aggregatedData).map((item) => {
     // 处理IO模型开始时间和结束时间
     let ioStartDate = new Date();
     let ioEndDate = new Date();
@@ -631,8 +763,6 @@ const updateDataTable = () => {
       ioStartDate = new Date(item.io_start_time);
     } else if (item.collection_time) {
       ioStartDate = new Date(item.collection_time);
-    } else if (item.timestamp) {
-      ioStartDate = new Date(item.timestamp);
     }
     
     if (item.io_end_time) {
@@ -642,36 +772,30 @@ const updateDataTable = () => {
     }
     
     return {
-      io_model_name: item.io_model_name || '未知IO模型',
+      io_model_name: item.io_model_name,
       io_start_time: ioStartDate.toLocaleString(),
       io_end_time: ioEndDate.toLocaleString(),
-      device: item.device,
-      total_iops: total_iops.toFixed(2),
-      total_kbps: total_kbps.toFixed(2),
-      await_time: parseFloat(item.await_time || 0).toFixed(2),
-      read_iops: parseFloat(item.read_iops || 0).toFixed(2),
-      write_iops: parseFloat(item.write_iops || 0).toFixed(2),
-      read_kbps: parseFloat(item.read_kbps || 0).toFixed(2),
-      write_kbps: parseFloat(item.write_kbps || 0).toFixed(2),
-      lat_p99: parseFloat(item.lat_p99 || 0).toFixed(2),
-      lat_max: parseFloat(item.lat_max || 0).toFixed(2),
-      // 保留原始数据的其他字段
-      collection_time: item.collection_time
+      device: item.devices.join(', '),
+      total_iops: item.total_iops.toFixed(2),
+      total_kbps: item.total_kbps.toFixed(2),
+      await_time: (item.await_time / item.count).toFixed(2),
+      read_iops: item.read_iops.toFixed(2),
+      write_iops: item.write_iops.toFixed(2),
+      read_kbps: item.read_kbps.toFixed(2),
+      write_kbps: item.write_kbps.toFixed(2),
+      lat_p99: (item.lat_p99 / item.count).toFixed(2),
+      lat_max: item.lat_max.toFixed(2)
     };
   });
 };
 
 // 查看日志详情
 const viewLogDetails = (logId) => {
-  // 跳转到日志详情页面
-  router.push(`/logs/${logId}`);
+  // 跳转到日志详情页面，使用正确的路由格式
+  router.push(`/logs?logId=${logId}`);
 };
 
-// 查看抖动图表
-const viewJitterChart = (logId) => {
-  // 跳转到抖动图表页面
-  router.push(`/io-jitter-chart/${taskId.value}?logId=${logId}`);
-};
+
 
 // 处理标签页切换
 const handleTabChange = (tabName) => {
