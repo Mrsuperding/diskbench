@@ -208,6 +208,15 @@
             <el-option label="高" value="high" />
           </el-select>
         </el-form-item>
+        <el-form-item label="执行模式" prop="execution_mode">
+          <el-select
+            v-model="taskForm.execution_mode"
+            placeholder="请选择执行模式"
+          >
+            <el-option label="并行执行" value="parallel" />
+            <el-option label="串行执行" value="serial" />
+          </el-select>
+        </el-form-item>
       </el-form>
       <template #footer>
         <span class="dialog-footer">
@@ -276,6 +285,7 @@ export default {
       task_space_id: "",
       status: "pending",
       priority: "medium",
+      execution_mode: "parallel",
     });
 
     // 表单规则
@@ -457,6 +467,7 @@ export default {
         task_space_id: "",
         status: "pending",
         priority: "medium",
+        execution_mode: "parallel",
       });
     };
 

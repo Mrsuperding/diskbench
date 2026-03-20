@@ -93,7 +93,7 @@ const iostatMetrics = reactive({
   write_iops: [],
   read_kbps: [],
   write_kbps: [],
-  await: [],
+  await_time: [],
   svctm: [],
   util: [],
 });
@@ -137,9 +137,11 @@ const loadIOStatData = async () => {
     });
     console.log("获取任务日志成功:", logsResponse);
     if (logsResponse && logsResponse.data) {
-      const iostatLogs = logsResponse.data.filter(
-        (log) => log.log_type === "iostat",
-      );
+      let logsData = logsResponse.data;
+      if (logsResponse.data.items) {
+        logsData = logsResponse.data.items;
+      }
+      const iostatLogs = logsData.filter((log) => log.log_type === "iostat");
       console.log("IOSTAT日志:", iostatLogs);
 
       if (iostatLogs.length > 0) {
@@ -151,8 +153,14 @@ const loadIOStatData = async () => {
         if (metricsResponse && metricsResponse.data) {
           processIOStatMetrics(metricsResponse.data);
           updateIOStatChart();
+        } else {
+          console.error("IOSTAT指标数据为空");
         }
+      } else {
+        console.error("没有找到IOSTAT类型的日志");
       }
+    } else {
+      console.error("任务日志数据为空");
     }
   } catch (error) {
     console.error("加载IOSTAT数据失败:", error);
@@ -232,7 +240,7 @@ const resetIOStatData = () => {
   iostatMetrics.write_iops = [];
   iostatMetrics.read_kbps = [];
   iostatMetrics.write_kbps = [];
-  iostatMetrics.await = [];
+  iostatMetrics.await_time = [];
   iostatMetrics.svctm = [];
   iostatMetrics.util = [];
   availableDevices.value = [];
@@ -304,7 +312,7 @@ const updateIOStatChart = () => {
       write_iops: "#f6bd16",
       read_kbps: "#1890ff",
       write_kbps: "#722ed1",
-      await: "#eb2f96",
+      await_time: "#eb2f96",
       svctm: "#fa8c16",
       util: "#f5222d",
     };
@@ -318,7 +326,7 @@ const updateIOStatChart = () => {
       write_iops: "写IOPS",
       read_kbps: "读吞吐量 (KB/s)",
       write_kbps: "写吞吐量 (KB/s)",
-      await: "IO等待时间 (ms)",
+      await_time: "IO等待时间 (ms)",
       svctm: "服务时间 (ms)",
       util: "磁盘使用率 (%)",
     };

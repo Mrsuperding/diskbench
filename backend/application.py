@@ -243,5 +243,5 @@ if __name__ == '__main__':
             
             sys.exit(0)
     
-    # 使用SocketIO运行应用
-    socketio.run(app, debug=True, host='0.0.0.0', port=5003, use_reloader=False)
+    # 使用 SocketIO 运行应用
+    socketio.run(app, debug=True, host='0.0.0.0', port=5004, use_reloader=False)

@@ -102,6 +102,24 @@
                 </el-col>
               </el-row>
 
+              <!-- 任务失败原因 -->
+              <el-row :gutter="20">
+                <el-col :span="24">
+                  <el-form-item
+                    label="失败原因"
+                    v-if="taskDetail.status === 'failed'"
+                  >
+                    <el-input
+                      v-model="taskDetail.error_message"
+                      type="textarea"
+                      :rows="3"
+                      disabled
+                      placeholder="任务执行失败的原因"
+                    />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+
               <!-- 定时运行设置 -->
               <el-form-item label="定时运行设置">
                 <el-date-picker
@@ -213,12 +231,85 @@
         <!-- 日志输出 -->
         <el-collapse-item title="日志输出" name="4">
           <div class="task-logs">
+            <!-- 日志过滤和搜索 -->
+            <div class="log-filter" style="margin-bottom: 10px">
+              <el-select
+                v-model="logFilter.level"
+                placeholder="日志级别"
+                style="width: 120px; margin-right: 10px"
+              >
+                <el-option label="全部" value="" />
+                <el-option label="DEBUG" value="DEBUG" />
+                <el-option label="INFO" value="INFO" />
+                <el-option label="WARNING" value="WARNING" />
+                <el-option label="ERROR" value="ERROR" />
+                <el-option label="CRITICAL" value="CRITICAL" />
+              </el-select>
+              <el-input
+                v-model="logFilter.keyword"
+                placeholder="搜索关键词"
+                style="width: 200px; margin-right: 10px"
+              >
+                <template #append>
+                  <el-button @click="clearLogFilter">清空</el-button>
+                </template>
+              </el-input>
+              <el-button type="primary" @click="filterLogs">过滤</el-button>
+            </div>
+
+            <!-- 日志列表 -->
             <el-scrollbar height="400px">
-              <pre v-for="log in logs" :key="log.id" class="log-item">
-                <span class="log-time">{{ log.timestamp }}</span>
-                <span class="log-content">{{ log.content }}</span>
-              </pre>
+              <div
+                v-for="log in filteredLogs"
+                :key="log.id"
+                :class="[
+                  'log-item',
+                  'log-level-' +
+                    (typeof log.level === 'string'
+                      ? log.level
+                      : 'info'
+                    ).toLowerCase(),
+                ]"
+              >
+                <div class="log-header">
+                  <span class="log-time">{{
+                    formatLogTime(log.timestamp)
+                  }}</span>
+                  <span
+                    class="log-level"
+                    :class="
+                      'log-level-' +
+                      (typeof log.level === 'string'
+                        ? log.level
+                        : 'info'
+                      ).toLowerCase()
+                    "
+                    >{{ log.level || "INFO" }}</span
+                  >
+                  <span class="log-module">{{ log.module }}</span>
+                </div>
+                <div class="log-content">{{ log.message }}</div>
+                <div
+                  v-if="
+                    log.context &&
+                    typeof log.context === 'object' &&
+                    Object.keys(log.context).length > 0
+                  "
+                  class="log-context"
+                >
+                  <el-button
+                    type="text"
+                    size="small"
+                    @click="showLogContext(log.context)"
+                    >查看上下文</el-button
+                  >
+                </div>
+              </div>
+              <div v-if="filteredLogs.length === 0" class="no-logs">
+                暂无日志
+              </div>
             </el-scrollbar>
+
             <el-button
               type="primary"
               size="small"
@@ -329,190 +420,65 @@
       </template>
     </el-dialog>
 
-    <!-- 编辑IO任务对话框 -->
+    <!-- 详细数据对话框 -->
     <el-dialog
-      v-model="editIOTaskDialogVisible"
-      :title="editIOTaskDialogTitle"
-      width="1200px"
-      @close="resetIOTaskForm"
+      v-model="detailedDataDialogVisible"
+      title="任务详细数据"
+      width="90%"
+      :fullscreen="false"
     >
-      <!-- 详细数据对话框 -->
-      <el-dialog
-        v-model="detailedDataDialogVisible"
-        title="任务详细数据"
-        width="90%"
-        :fullscreen="false"
-      >
-        <el-table :data="detailedData" style="width: 100%">
-          <el-table-column
-            prop="ioModelName"
-            label="IO模型"
-            width="200"
-          ></el-table-column>
-          <el-table-column
-            prop="nodeName"
-            label="节点名称"
-            width="150"
-          ></el-table-column>
-          <el-table-column
-            prop="nodeIp"
-            label="节点IP"
-            width="150"
-          ></el-table-column>
-          <el-table-column prop="status" label="状态" width="100">
-            <template #default="scope">
-              <el-tag
-                :type="scope.row.status === 'completed' ? 'success' : 'danger'"
-              >
-                {{ scope.row.status }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column
-            prop="createdAt"
-            label="创建时间"
-            width="200"
-          ></el-table-column>
-          <el-table-column label="详细结果" width="120">
-            <template #default="scope">
-              <el-button
-                type="primary"
-                size="small"
-                @click="showResultDetails(scope.row)"
-              >
-                查看详情
-              </el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-dialog>
-      <div class="io-case-edit-container">
-        <!-- 左侧：编辑表单 -->
-        <div class="edit-section">
-          <h3>编辑信息</h3>
-          <el-form
-            :model="ioTaskForm"
-            :rules="ioTaskFormRules"
-            ref="ioTaskFormRef"
-            label-width="120px"
-          >
-            <el-form-item label="任务名称" prop="name">
-              <el-input
-                v-model="ioTaskForm.name"
-                placeholder="请输入IO任务名称"
-                @input="updateIOTaskPreviewData"
-              />
-            </el-form-item>
-            <el-form-item label="模板选择" prop="template_id">
-              <el-select
-                v-model="ioTaskForm.template_id"
-                placeholder="请选择模板"
-                filterable
-                clearable
-                @change="updateIOTaskPreviewData"
-              >
-                <el-option
-                  v-for="template in templates"
-                  :key="template.id"
-                  :label="template.name"
-                  :value="template.id"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="块大小(KB)" prop="block_size">
-              <el-input
-                v-model="ioTaskForm.block_size"
-                placeholder="支持多个值，用逗号分隔，例如：4,8,16"
-                @input="updateIOTaskPreviewData"
-              />
-            </el-form-item>
-            <el-form-item label="队列深度" prop="queue_depth">
-              <el-input
-                v-model="ioTaskForm.queue_depth"
-                placeholder="支持多个值，用逗号分隔，例如：1,8,16,32"
-                @input="updateIOTaskPreviewData"
-              />
-            </el-form-item>
-            <el-form-item label="IO类型" prop="io_type">
-              <el-input
-                v-model="ioTaskForm.io_type"
-                placeholder="支持多个值，用逗号分隔，例如：read,write,randread,randwrite"
-                @input="updateIOTaskPreviewData"
-              />
-            </el-form-item>
-            <el-form-item label="读写比例" prop="read_write_ratio">
-              <el-input
-                v-model="ioTaskForm.read_write_ratio"
-                placeholder="例如: 70:30"
-                @input="updateIOTaskPreviewData"
-              />
-            </el-form-item>
-            <el-form-item label="运行时间(秒)" prop="runtime">
-              <el-input-number
-                v-model="ioTaskForm.runtime"
-                :min="1"
-                placeholder="请输入运行时间"
-                @change="updateIOTaskPreviewData"
-              />
-            </el-form-item>
-            <el-form-item label="测试文件大小" prop="size">
-              <el-input
-                v-model="ioTaskForm.size"
-                placeholder="例如: 1G"
-                @input="updateIOTaskPreviewData"
-              />
-            </el-form-item>
-            <el-form-item label="分区选择" prop="partitions">
-              <el-input
-                v-model="ioTaskForm.partitions"
-                placeholder="支持多个分区，用逗号分隔，例如：sda1,sda2,sdb1"
-                @input="updateIOTaskPreviewData"
-              />
-            </el-form-item>
-            <el-form-item label="描述" prop="description">
-              <el-input
-                v-model="ioTaskForm.description"
-                type="textarea"
-                placeholder="请输入IO任务描述"
-                :rows="3"
-                @input="updateIOTaskPreviewData"
-              />
-            </el-form-item>
-            <el-form-item label="任务状态" prop="status">
-              <el-select
-                v-model="ioTaskForm.status"
-                placeholder="请选择任务状态"
-              >
-                <el-option label="待执行" value="pending" />
-                <el-option label="执行中" value="running" />
-                <el-option label="已完成" value="completed" />
-                <el-option label="失败" value="failed" />
-                <el-option label="已停止" value="stopped" />
-              </el-select>
-            </el-form-item>
-          </el-form>
-        </div>
-
-        <!-- 右侧：展示区域 -->
-        <div class="view-section">
-          <!-- 模型列表 -->
-          <h3>模型列表</h3>
-          <el-card shadow="hover" class="model-list-card">
-            <el-table :data="modelList" style="width: 100%" border stripe>
-              <el-table-column prop="queueDepth" label="队列深度" width="100" />
-              <el-table-column prop="ioType" label="读写模式" width="120" />
-              <el-table-column prop="modelName" label="模型名称" />
-            </el-table>
-          </el-card>
-        </div>
-      </div>
-      <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="editIOTaskDialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="submitIOTaskForm">确定</el-button>
-        </span>
-      </template>
+      <el-table :data="detailedData" style="width: 100%">
+        <el-table-column
+          prop="ioModelName"
+          label="IO模型"
+          width="200"
+        ></el-table-column>
+        <el-table-column
+          prop="nodeName"
+          label="节点名称"
+          width="150"
+        ></el-table-column>
+        <el-table-column
+          prop="nodeIp"
+          label="节点IP"
+          width="150"
+        ></el-table-column>
+        <el-table-column prop="status" label="状态" width="100">
+          <template #default="scope">
+            <el-tag
+              :type="scope.row.status === 'completed' ? 'success' : 'danger'"
+            >
+              {{ scope.row.status }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column
+          prop="createdAt"
+          label="创建时间"
+          width="200"
+        ></el-table-column>
+        <el-table-column label="详细结果" width="120">
+          <template #default="scope">
+            <el-button
+              type="primary"
+              size="small"
+              @click="showResultDetails(scope.row)"
+            >
+              查看详情
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
     </el-dialog>
+
+    <!-- 编辑IO用例模型对话框 -->
+    <IOCaseEditor
+      v-model="editIOTaskDialogVisible"
+      :dialogTitle="editIOTaskDialogTitle"
+      :showStatus="true"
+      :initialData="currentIOTaskData"
+      @submit="handleIOTaskSubmit"
+    />
   </div>
 </template>
 
@@ -536,6 +502,7 @@ import {
   ToolboxComponent,
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
+import IOCaseEditor from "../components/IOCaseEditor.vue";
 
 // 注册ECharts组件
 use([
@@ -552,6 +519,9 @@ use([
 
 export default {
   name: "TaskDetail",
+  components: {
+    IOCaseEditor,
+  },
   setup() {
     // 路由
     const route = useRoute();
@@ -605,67 +575,79 @@ export default {
     const addDialogVisible = ref(false);
     const addType = ref(""); // 'node' 或 'io_case'
 
-    // 编辑IO任务对话框
+    // 编辑IO用例模型对话框
     const editIOTaskDialogVisible = ref(false);
-    const editIOTaskDialogTitle = ref("编辑IO任务");
+    const editIOTaskDialogTitle = ref("编辑IO用例模型");
     const editingIOTask = ref(null);
+    const currentIOTaskData = ref({});
 
-    // 模板列表
-    const templates = ref([]);
+    // 处理IO任务表单提交
+    const handleIOTaskSubmit = async (taskData) => {
+      try {
+        // 调用API更新IO测试用例
+        await ioCasesApi.updateIOCase(editingIOTask.value.id, taskData);
 
-    // 表单
-    const ioTaskFormRef = ref(null);
-    const ioTaskForm = reactive({
-      name: "",
-      template_id: null,
-      block_size: "4",
-      queue_depth: "16",
-      io_type: "randread",
-      read_write_ratio: "100:0",
-      runtime: 60,
-      size: "1G",
-      partitions: "",
-      description: "",
-      status: "pending",
-    });
+        // 更新本地数据
+        const index = ioTasks.value.findIndex(
+          (t) => t.id === editingIOTask.value.id,
+        );
+        if (index > -1) {
+          // 更新本地数据
+          const updatedTask = {
+            ...ioTasks.value[index],
+            ...taskData,
+          };
 
-    // 表单规则
-    const ioTaskFormRules = reactive({
-      name: [
-        { required: true, message: "请输入任务名称", trigger: "blur" },
-        {
-          min: 2,
-          max: 50,
-          message: "任务名称长度在 2 到 50 个字符",
-          trigger: "blur",
-        },
-      ],
-      block_size: [
-        { required: true, message: "请输入块大小", trigger: "blur" },
-      ],
-      queue_depth: [
-        { required: true, message: "请输入队列深度", trigger: "blur" },
-      ],
-      io_type: [{ required: true, message: "请输入IO类型", trigger: "blur" }],
-      runtime: [
-        { required: true, message: "请输入运行时间", trigger: "blur" },
-        {
-          type: "number",
-          min: 1,
-          message: "运行时间必须大于0",
-          trigger: "blur",
-        },
-      ],
-    });
+          // 如果有io_cases数组，也更新其中的数据
+          if (updatedTask.io_cases && updatedTask.io_cases.length > 0) {
+            updatedTask.io_cases[0] = {
+              ...updatedTask.io_cases[0],
+              ...taskData,
+            };
+          }
 
-    // 预览数据
-    const previewIOTask = reactive({});
-
-    // 模型列表
-    const modelList = ref([]);
+          ioTasks.value[index] = updatedTask;
+          ElMessage.success("IO任务更新成功");
+          editIOTaskDialogVisible.value = false;
+        }
+      } catch (error) {
+        ElMessage.error("IO任务更新失败: " + error.message);
+      }
+    };
 
     // 日志数据
     const logs = ref([]);
+
+    // 日志过滤条件
+    const logFilter = reactive({
+      level: "",
+      keyword: "",
+    });
+
+    // 过滤后的日志
+    const filteredLogs = computed(() => {
+      let result = [...logs.value];
+
+      // 按级别过滤
+      if (logFilter.level) {
+        result = result.filter((log) => log.level === logFilter.level);
+      }
+
+      // 按关键词过滤
+      if (logFilter.keyword) {
+        const keyword = logFilter.keyword.toLowerCase();
+        result = result.filter(
+          (log) =>
+            (typeof log.message === "string" &&
+              log.message.toLowerCase().includes(keyword)) ||
+            (log.context &&
+              typeof log.context === "object" &&
+              JSON.stringify(log.context).toLowerCase().includes(keyword)),
+        );
+      }
+
+      return result;
+    });
 
     // WebSocket相关
     const socket = ref(null);
@@ -718,45 +700,50 @@ export default {
       // 接收任务日志
       socket.value.on("task_log", (data) => {
         console.log("收到任务日志:", data);
-        let logContent = "";
 
-        // 处理不同格式的日志数据
-        if (data && typeof data === "object") {
-          if (data.log) {
-            logContent = data.log;
-          } else {
-            logContent = JSON.stringify(data);
-          }
-        } else if (typeof data === "string") {
-          logContent = data;
-        }
-
-        // 添加到日志列表
-        if (typeof logContent === "string") {
-          const logLines = logContent.split("\n");
-          logLines.forEach((line) => {
-            if (line.trim()) {
-              logs.value.push({
-                id: logId++,
-                timestamp: new Date().toLocaleString(),
-                content: line.trim(),
-              });
-              console.log("添加日志:", line.trim());
-
-              // 尝试解析iostat日志
-              parseIostatLog(line.trim());
-            }
-          });
-        } else if (typeof logContent === "object") {
+        // 处理新的结构化日志格式
+        if (data && typeof data === "object" && data.data) {
+          const logData = data.data;
           logs.value.push({
             id: logId++,
-            timestamp: new Date().toLocaleString(),
-            content: JSON.stringify(logContent),
+            timestamp: logData.timestamp || new Date().toLocaleString(),
+            level: logData.level || "INFO",
+            module: logData.module || "tasks",
+            message: logData.message,
+            context: logData.context || {},
           });
+          console.log("添加结构化日志:", logData);
+        } else {
+          // 兼容旧格式
+          let logContent = "";
+          if (data && typeof data === "object") {
+            if (data.log) {
+              logContent = data.log;
+            } else {
+              logContent = JSON.stringify(data);
+            }
+          } else if (typeof data === "string") {
+            logContent = data;
+          }
 
-          // 尝试解析iostat对象数据
-          if (logContent.type === "iostat") {
-            processIostatData(logContent);
+          if (typeof logContent === "string") {
+            const logLines = logContent.split("\n");
+            logLines.forEach((line) => {
+              if (line.trim()) {
+                logs.value.push({
+                  id: logId++,
+                  timestamp: new Date().toLocaleString(),
+                  level: "INFO",
+                  module: "tasks",
+                  message: line.trim(),
+                  context: {},
+                });
+                console.log("添加旧格式日志:", line.trim());
+
+                // 尝试解析iostat日志
+                parseIostatLog(line.trim());
+              }
+            });
           }
         }
       });
@@ -856,23 +843,66 @@ export default {
         testResults.value = resultsResponse.data;
 
         // 处理详细数据
-        detailedData.value = testResults.value.map((result) => {
-          const ioTestCase = ioTasks.value.find(
-            (task) => task.id === result.io_test_case_id,
-          );
-          const node = taskNodes.value.find((n) => n.id === result.node_id);
+        let processedData = [];
 
-          return {
-            id: result.id,
-            ioModelName: ioTestCase ? ioTestCase.name : "未知IO模型",
-            nodeName: node ? node.name : "未知节点",
-            nodeIp: node ? node.ip_address : "未知IP",
-            status: result.status,
-            createdAt: result.created_at,
-            rawResult: result.raw_output,
-            parsedResult: result.parsed_results,
-          };
-        });
+        // 检查返回的数据结构
+        if (Array.isArray(testResults.value)) {
+          // 处理API返回的实时FIO日志指标数据结构
+          testResults.value.forEach((result, index) => {
+            const node = taskNodes.value.find((n) => n.id === result.node_id);
+
+            processedData.push({
+              id: `${result.node_id}_${index}`,
+              ioModelName: result.io_model_name || "未知IO模型",
+              nodeName: node ? node.name : "未知节点",
+              nodeIp: node ? node.ip_address : "未知IP",
+              status: "success", // 假设所有返回的结果都是成功的
+              createdAt: result.collection_time || new Date().toISOString(),
+              rawResult: JSON.stringify(result),
+              parsedResult: result,
+            });
+          });
+        } else {
+          // 处理旧的数据结构
+          testResults.value.forEach((result) => {
+            const ioTestCase = ioTasks.value.find(
+              (task) => task.id === result.io_test_case_id,
+            );
+            const node = taskNodes.value.find((n) => n.id === result.node_id);
+
+            // 检查parsed_results是否为数组（多个测试组合）
+            if (Array.isArray(result.parsed_results)) {
+              // 为每个测试组合创建一个条目
+              result.parsed_results.forEach((testResult, index) => {
+                processedData.push({
+                  id: `${result.id}_${index}`,
+                  ioModelName: ioTestCase
+                    ? `${ioTestCase.name} (${testResult.params.io_type}, ${testResult.params.blocksize}, ${testResult.params.iodepth})`
+                    : "未知IO模型",
+                  nodeName: node ? node.name : "未知节点",
+                  nodeIp: node ? node.ip_address : "未知IP",
+                  status: testResult.success ? "success" : "failed",
+                  createdAt: result.created_at,
+                  rawResult: testResult.raw_output,
+                  parsedResult: testResult,
+                });
+              });
+            } else {
+              // 单个测试结果
+              processedData.push({
+                id: result.id,
+                ioModelName: ioTestCase ? ioTestCase.name : "未知IO模型",
+                nodeName: node ? node.name : "未知节点",
+                nodeIp: node ? node.ip_address : "未知IP",
+                status: result.status,
+                createdAt: result.created_at,
+                rawResult: result.raw_output,
+                parsedResult: result.parsed_results,
+              });
+            }
+          });
+        }
+        detailedData.value = processedData;
       } catch (error) {
         console.error("加载测试结果失败:", error);
         ElMessage.error("加载测试结果失败");
@@ -960,24 +990,30 @@ export default {
               ioTasks.value = taskIOCases.map((ioCase) => {
                 // 查找该IO用例的测试结果，获取真实状态
                 const ioCaseResults = testResults.value.filter(
-                  result => result.io_test_case_id === ioCase.id
+                  (result) => result.io_test_case_id === ioCase.id,
                 );
-                
+
                 // 确定IO任务的状态
                 let ioStatus = "pending";
                 if (ioCaseResults.length > 0) {
                   // 检查是否有失败的结果
-                  const hasFailed = ioCaseResults.some(result => result.status === "failed");
+                  const hasFailed = ioCaseResults.some(
+                    (result) => result.status === "failed",
+                  );
                   if (hasFailed) {
                     ioStatus = "failed";
                   } else {
                     // 检查是否所有结果都已完成
-                    const allCompleted = ioCaseResults.every(result => result.status === "completed");
+                    const allCompleted = ioCaseResults.every(
+                      (result) => result.status === "completed",
+                    );
                     if (allCompleted) {
                       ioStatus = "completed";
                     } else {
                       // 检查是否有运行中的结果
-                      const hasRunning = ioCaseResults.some(result => result.status === "running");
+                      const hasRunning = ioCaseResults.some(
+                        (result) => result.status === "running",
+                      );
                       if (hasRunning) {
                         ioStatus = "running";
                       }
@@ -990,16 +1026,17 @@ export default {
                   // 否则使用任务状态
                   ioStatus = taskDetail.status || "pending";
                 }
-                
+
                 return {
                   id: ioCase.id,
                   name: ioCase.name || "未命名IO任务",
                   type:
                     ioCase.parameters?.read_write_mode || ioCase.type || "read",
                   status: ioStatus,
-                  progress: ioCaseResults.length > 0 ? 100 : taskDetail.progress || 0,
+                  progress:
+                    ioCaseResults.length > 0 ? 100 : taskDetail.progress || 0,
                   io_cases: [ioCase],
-                  results: ioCaseResults
+                  results: ioCaseResults,
                 };
               });
             } else {
@@ -1008,24 +1045,30 @@ export default {
               ioTasks.value = allIOCases.map((ioCase) => {
                 // 查找该IO用例的测试结果，获取真实状态
                 const ioCaseResults = testResults.value.filter(
-                  result => result.io_test_case_id === ioCase.id
+                  (result) => result.io_test_case_id === ioCase.id,
                 );
-                
+
                 // 确定IO任务的状态
                 let ioStatus = "pending";
                 if (ioCaseResults.length > 0) {
                   // 检查是否有失败的结果
-                  const hasFailed = ioCaseResults.some(result => result.status === "failed");
+                  const hasFailed = ioCaseResults.some(
+                    (result) => result.status === "failed",
+                  );
                   if (hasFailed) {
                     ioStatus = "failed";
                   } else {
                     // 检查是否所有结果都已完成
-                    const allCompleted = ioCaseResults.every(result => result.status === "completed");
+                    const allCompleted = ioCaseResults.every(
+                      (result) => result.status === "completed",
+                    );
                     if (allCompleted) {
                       ioStatus = "completed";
                     } else {
                       // 检查是否有运行中的结果
-                      const hasRunning = ioCaseResults.some(result => result.status === "running");
+                      const hasRunning = ioCaseResults.some(
+                        (result) => result.status === "running",
+                      );
                       if (hasRunning) {
                         ioStatus = "running";
                       }
@@ -1038,68 +1081,76 @@ export default {
                   // 否则使用任务状态
                   ioStatus = taskDetail.status || "pending";
                 }
-                
+
                 return {
                   id: ioCase.id,
                   name: ioCase.name || "未命名IO任务",
                   type:
                     ioCase.parameters?.read_write_mode || ioCase.type || "read",
                   status: ioStatus,
-                  progress: ioCaseResults.length > 0 ? 100 : taskDetail.progress || 0,
+                  progress:
+                    ioCaseResults.length > 0 ? 100 : taskDetail.progress || 0,
                   io_cases: [ioCase],
-                  results: ioCaseResults
+                  results: ioCaseResults,
                 };
               });
             }
           } else {
-              // 如果任务详情中没有IO测试用例ID列表，显示所有IO测试用例
-              console.log("任务详情中没有IO测试用例ID列表，显示所有IO测试用例");
-              ioTasks.value = allIOCases.map((ioCase) => {
-                // 查找该IO用例的测试结果，获取真实状态
-                const ioCaseResults = testResults.value.filter(
-                  result => result.io_test_case_id === ioCase.id
+            // 如果任务详情中没有IO测试用例ID列表，显示所有IO测试用例
+            console.log("任务详情中没有IO测试用例ID列表，显示所有IO测试用例");
+            ioTasks.value = allIOCases.map((ioCase) => {
+              // 查找该IO用例的测试结果，获取真实状态
+              const ioCaseResults = testResults.value.filter(
+                (result) => result.io_test_case_id === ioCase.id,
+              );
+
+              // 确定IO任务的状态
+              let ioStatus = "pending";
+              if (ioCaseResults.length > 0) {
+                // 检查是否有失败的结果
+                const hasFailed = ioCaseResults.some(
+                  (result) => result.status === "failed",
                 );
-                
-                // 确定IO任务的状态
-                let ioStatus = "pending";
-                if (ioCaseResults.length > 0) {
-                  // 检查是否有失败的结果
-                  const hasFailed = ioCaseResults.some(result => result.status === "failed");
-                  if (hasFailed) {
-                    ioStatus = "failed";
+                if (hasFailed) {
+                  ioStatus = "failed";
+                } else {
+                  // 检查是否所有结果都已完成
+                  const allCompleted = ioCaseResults.every(
+                    (result) => result.status === "completed",
+                  );
+                  if (allCompleted) {
+                    ioStatus = "completed";
                   } else {
-                    // 检查是否所有结果都已完成
-                    const allCompleted = ioCaseResults.every(result => result.status === "completed");
-                    if (allCompleted) {
-                      ioStatus = "completed";
-                    } else {
-                      // 检查是否有运行中的结果
-                      const hasRunning = ioCaseResults.some(result => result.status === "running");
-                      if (hasRunning) {
-                        ioStatus = "running";
-                      }
+                    // 检查是否有运行中的结果
+                    const hasRunning = ioCaseResults.some(
+                      (result) => result.status === "running",
+                    );
+                    if (hasRunning) {
+                      ioStatus = "running";
                     }
                   }
-                } else if (taskDetail.status === "completed") {
-                  // 如果任务已完成，但没有该IO用例的结果，可能是跳过了
-                  ioStatus = "skipped";
-                } else {
-                  // 否则使用任务状态
-                  ioStatus = taskDetail.status || "pending";
                 }
-                
-                return {
-                  id: ioCase.id,
-                  name: ioCase.name || "未命名IO任务",
-                  type:
-                    ioCase.parameters?.read_write_mode || ioCase.type || "read",
-                  status: ioStatus,
-                  progress: ioCaseResults.length > 0 ? 100 : taskDetail.progress || 0,
-                  io_cases: [ioCase],
-                  results: ioCaseResults
-                };
-              });
-            }
+              } else if (taskDetail.status === "completed") {
+                // 如果任务已完成，但没有该IO用例的结果，可能是跳过了
+                ioStatus = "skipped";
+              } else {
+                // 否则使用任务状态
+                ioStatus = taskDetail.status || "pending";
+              }
+
+              return {
+                id: ioCase.id,
+                name: ioCase.name || "未命名IO任务",
+                type:
+                  ioCase.parameters?.read_write_mode || ioCase.type || "read",
+                status: ioStatus,
+                progress:
+                  ioCaseResults.length > 0 ? 100 : taskDetail.progress || 0,
+                io_cases: [ioCase],
+                results: ioCaseResults,
+              };
+            });
+          }
 
           console.log("最终的IO任务列表:", ioTasks.value);
 
@@ -1333,151 +1384,22 @@ export default {
       selectedIOTask.value = null;
     };
 
-    // 加载模板列表
-    const loadTemplates = async () => {
-      try {
-        const response = await ioCasesApi.getTemplates();
-        templates.value = response.data;
-      } catch (error) {
-        ElMessage.error("加载模板列表失败: " + error.message);
-      }
-    };
-
-    // 更新IO任务预览数据
-    const updateIOTaskPreviewData = () => {
-      // 更新预览数据
-      Object.assign(previewIOTask, {
-        name: ioTaskForm.name,
-        description: ioTaskForm.description,
-        parameters: {
-          template_id: ioTaskForm.template_id,
-          block_size: ioTaskForm.block_size,
-          queue_depth: ioTaskForm.queue_depth,
-          io_type: ioTaskForm.io_type,
-          read_write_ratio: ioTaskForm.read_write_ratio,
-          runtime: ioTaskForm.runtime,
-          size: ioTaskForm.size,
-          partitions: ioTaskForm.partitions,
-        },
-      });
-
-      // 生成模型列表
-      generateModelList(previewIOTask);
-    };
-
-    // 生成模型列表
-    const generateModelList = (taskData) => {
-      // 清空现有模型列表
-      modelList.value = [];
-
-      // 简单实现，根据IO任务参数生成模型列表
-      const ioTypes = (taskData.parameters?.io_type || "randread").split(",");
-      const queueDepths = (taskData.parameters?.queue_depth || "16").split(",");
-
-      ioTypes.forEach((ioType) => {
-        queueDepths.forEach((queueDepth) => {
-          modelList.value.push({
-            queueDepth: queueDepth,
-            ioType: ioType,
-            modelName: `${ioType}_qd${queueDepth}`,
-          });
-        });
-      });
-    };
-
-    // 编辑IO任务
+    // 编辑IO用例模型
     const editIOTask = (row) => {
-      editIOTaskDialogTitle.value = "编辑IO任务";
+      console.log("编辑IO用例模型，row数据:", row);
+      editIOTaskDialogTitle.value = "编辑IO用例模型";
       editingIOTask.value = row;
-
-      // 从parameters中提取字段
-      Object.assign(ioTaskForm, {
-        name: row.name,
-        description: row.description || "",
-        template_id: row.parameters?.template_id || null,
-        block_size: String(row.parameters?.block_size || "4"),
-        queue_depth: String(row.parameters?.queue_depth || "16"),
-        io_type: row.parameters?.io_type || "randread",
-        read_write_ratio: row.parameters?.read_write_ratio || "100:0",
-        runtime: row.parameters?.runtime || 60,
-        size: row.parameters?.size || "1G",
-        partitions: row.parameters?.partitions || "",
-        status: row.status || "pending",
-      });
-
-      // 更新预览数据
-      updateIOTaskPreviewData();
-
-      // 打开编辑对话框
+      // 如果row中有io_cases数组，使用第一个元素作为initialData
+      // 否则直接使用row
+      if (row.io_cases && row.io_cases.length > 0) {
+        console.log("使用io_cases[0]作为initialData:", row.io_cases[0]);
+        currentIOTaskData.value = row.io_cases[0];
+      } else {
+        console.log("直接使用row作为initialData:", row);
+        currentIOTaskData.value = row;
+      }
+      console.log("最终的currentIOTaskData:", currentIOTaskData.value);
       editIOTaskDialogVisible.value = true;
-    };
-
-    // 重置IO任务表单
-    const resetIOTaskForm = () => {
-      if (ioTaskFormRef.value) {
-        ioTaskFormRef.value.resetFields();
-      }
-      Object.assign(ioTaskForm, {
-        name: "",
-        template_id: null,
-        block_size: "4",
-        queue_depth: "16",
-        io_type: "randread",
-        read_write_ratio: "100:0",
-        runtime: 60,
-        size: "1G",
-        partitions: "",
-        description: "",
-        status: "pending",
-      });
-
-      // 更新预览数据
-      updateIOTaskPreviewData();
-    };
-
-    // 提交IO任务表单
-    const submitIOTaskForm = async () => {
-      if (!ioTaskFormRef.value) return;
-
-      try {
-        await ioTaskFormRef.value.validate();
-
-        // 构建parameters JSON对象
-        const taskData = {
-          name: ioTaskForm.name,
-          description: ioTaskForm.description,
-          parameters: {
-            template_id: ioTaskForm.template_id,
-            block_size: ioTaskForm.block_size,
-            queue_depth: ioTaskForm.queue_depth,
-            io_type: ioTaskForm.io_type,
-            read_write_ratio: ioTaskForm.read_write_ratio,
-            runtime: ioTaskForm.runtime,
-            size: ioTaskForm.size,
-            partitions: ioTaskForm.partitions,
-          },
-          status: ioTaskForm.status,
-        };
-
-        // 调用API更新IO测试用例
-        await ioCasesApi.updateIOCase(editingIOTask.value.id, taskData);
-
-        // 更新本地数据
-        const index = ioTasks.value.findIndex(
-          (t) => t.id === editingIOTask.value.id,
-        );
-        if (index > -1) {
-          // 更新本地数据
-          ioTasks.value[index] = {
-            ...ioTasks.value[index],
-            ...taskData,
-          };
-          ElMessage.success("IO任务更新成功");
-          editIOTaskDialogVisible.value = false;
-        }
-      } catch (error) {
-        ElMessage.error("IO任务更新失败: " + error.message);
-      }
     };
 
     // 删除IO任务
@@ -1493,14 +1415,26 @@ export default {
       )
         .then(async () => {
           try {
-            // 这里需要调用API删除IO任务
-            // await tasksApi.deleteIOTask(row.id)
-            // 暂时使用本地数据删除
+            // 从本地IO任务列表中移除
             const index = ioTasks.value.findIndex((t) => t.id === row.id);
             if (index > -1) {
               ioTasks.value.splice(index, 1);
-              ElMessage.success("IO任务删除成功");
             }
+
+            // 从任务详情的IO测试用例ID列表中移除
+            const caseIndex = taskDetail.io_test_case_ids.findIndex(
+              (id) => id === row.id,
+            );
+            if (caseIndex > -1) {
+              taskDetail.io_test_case_ids.splice(caseIndex, 1);
+
+              // 调用API更新任务的IO测试用例关联
+              await tasksApi.updateTask(taskId.value, {
+                io_test_case_ids: taskDetail.io_test_case_ids,
+              });
+            }
+
+            ElMessage.success("IO任务删除成功");
           } catch (error) {
             ElMessage.error("IO任务删除失败: " + error.message);
           }
@@ -1515,53 +1449,89 @@ export default {
       if (selectedNode.value) {
         // 删除选中节点
         try {
-          // 这里需要调用API删除节点
-          // await tasksApi.deleteNode(taskId.value, selectedNode.value.id)
-          // 暂时使用本地数据删除
+          // 从本地节点列表中移除
           const index = taskNodes.value.findIndex(
             (n) => n.id === selectedNode.value.id,
           );
           if (index > -1) {
             taskNodes.value.splice(index, 1);
-            ElMessage.success("节点删除成功");
-            selectedNode.value = null;
           }
+
+          // 从任务详情的节点ID列表中移除
+          const nodeIndex = taskDetail.node_ids.findIndex(
+            (id) => id === selectedNode.value.id,
+          );
+          if (nodeIndex > -1) {
+            taskDetail.node_ids.splice(nodeIndex, 1);
+
+            // 调用API更新任务的节点关联
+            await tasksApi.updateTask(taskId.value, {
+              node_ids: taskDetail.node_ids,
+            });
+          }
+
+          ElMessage.success("节点删除成功");
+          selectedNode.value = null;
         } catch (error) {
           ElMessage.error("节点删除失败: " + error.message);
         }
       } else if (selectedIOTask.value) {
         // 删除选中IO任务
         try {
-          // 这里需要调用API删除IO任务
-          // await tasksApi.deleteIOTask(selectedIOTask.value.id)
-          // 暂时使用本地数据删除
+          // 从本地IO任务列表中移除
           const index = ioTasks.value.findIndex(
             (t) => t.id === selectedIOTask.value.id,
           );
           if (index > -1) {
             ioTasks.value.splice(index, 1);
-            ElMessage.success("IO任务删除成功");
-            selectedIOTask.value = null;
           }
+
+          // 从任务详情的IO测试用例ID列表中移除
+          const caseIndex = taskDetail.io_test_case_ids.findIndex(
+            (id) => id === selectedIOTask.value.id,
+          );
+          if (caseIndex > -1) {
+            taskDetail.io_test_case_ids.splice(caseIndex, 1);
+
+            // 调用API更新任务的IO测试用例关联
+            await tasksApi.updateTask(taskId.value, {
+              io_test_case_ids: taskDetail.io_test_case_ids,
+            });
+          }
+
+          ElMessage.success("IO任务删除成功");
+          selectedIOTask.value = null;
         } catch (error) {
           ElMessage.error("IO任务删除失败: " + error.message);
         }
       } else if (selectedIOCase.value) {
         // 删除选中IO测试用例
         try {
-          // 这里需要调用API删除IO测试用例
-          // await tasksApi.deleteIOCase(selectedIOCase.value.id)
-          // 暂时使用本地数据删除
+          // 从本地IO任务的IO用例列表中移除
           if (selectedIOTask.value && selectedIOTask.value.io_cases) {
             const index = selectedIOTask.value.io_cases.findIndex(
               (c) => c.id === selectedIOCase.value.id,
             );
             if (index > -1) {
               selectedIOTask.value.io_cases.splice(index, 1);
-              ElMessage.success("IO测试用例删除成功");
-              selectedIOCase.value = null;
             }
           }
+
+          // 从任务详情的IO测试用例ID列表中移除
+          const caseIndex = taskDetail.io_test_case_ids.findIndex(
+            (id) => id === selectedIOCase.value.id,
+          );
+          if (caseIndex > -1) {
+            taskDetail.io_test_case_ids.splice(caseIndex, 1);
+
+            // 调用API更新任务的IO测试用例关联
+            await tasksApi.updateTask(taskId.value, {
+              io_test_case_ids: taskDetail.io_test_case_ids,
+            });
+          }
+
+          ElMessage.success("IO测试用例删除成功");
+          selectedIOCase.value = null;
         } catch (error) {
           ElMessage.error("IO测试用例删除失败: " + error.message);
         }
@@ -1574,18 +1544,18 @@ export default {
         ElMessage.info("正在准备下载日志...");
         // 调用API下载日志
         const response = await tasksApi.downloadTaskLogs(taskId.value);
-        
+
         // 创建下载链接
         const blob = new Blob([response.data]);
         const url = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
+        const link = document.createElement("a");
         link.href = url;
         link.download = `task_${taskId.value}_logs.tar.gz`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         window.URL.revokeObjectURL(url);
-        
+
         ElMessage.success("日志下载成功");
       } catch (error) {
         console.error("下载日志失败:", error);
@@ -1731,8 +1701,6 @@ export default {
       if (taskId.value) {
         getTaskDetail();
       }
-      // 加载模板列表
-      loadTemplates();
     });
 
     const router = useRouter();
@@ -1747,6 +1715,33 @@ export default {
       router.push({ name: "IOStatChart", params: { id: taskId.value } });
     };
 
+    // 日志过滤方法
+    const filterLogs = () => {
+      // 过滤逻辑已经在computed属性中实现
+      console.log("过滤日志:", logFilter);
+    };
+
+    // 清空日志过滤条件
+    const clearLogFilter = () => {
+      logFilter.level = "";
+      logFilter.keyword = "";
+    };
+
+    // 格式化日志时间
+    const formatLogTime = (timestamp) => {
+      if (!timestamp) return "";
+      const date = new Date(timestamp);
+      return date.toLocaleString();
+    };
+
+    // 显示日志上下文
+    const showLogContext = (context) => {
+      ElMessageBox.alert(JSON.stringify(context, null, 2), "日志上下文", {
+        confirmButtonText: "确定",
+        type: "info",
+      });
+    };
+
     // 组件挂载后初始化图表
     onMounted(() => {
       // 这里的图表初始化代码已经移除，性能抖动图表现在是一个独立的页面
@@ -1758,6 +1753,8 @@ export default {
       taskNodes,
       ioTasks,
       logs,
+      logFilter,
+      filteredLogs,
       activeNames,
       scheduledTime,
       editIpDialogVisible,
@@ -1793,17 +1790,8 @@ export default {
       editIOTaskDialogVisible,
       editIOTaskDialogTitle,
       editingIOTask,
-      templates,
-      ioTaskFormRef,
-      ioTaskForm,
-      ioTaskFormRules,
-      previewIOTask,
-      modelList,
-      loadTemplates,
-      updateIOTaskPreviewData,
-      generateModelList,
-      resetIOTaskForm,
-      submitIOTaskForm,
+      currentIOTaskData,
+      handleIOTaskSubmit,
       detailedDataDialogVisible,
       detailedData,
       testResults,
@@ -1813,6 +1801,11 @@ export default {
       navigateToIOJitterChart,
       // 跳转到IOSTAT性能图表
       navigateToIOStatChart,
+      // 日志相关方法
+      filterLogs,
+      clearLogFilter,
+      formatLogTime,
+      showLogContext,
       // iostat指标数据
       iostatMetrics,
       // 解析iostat日志函数
@@ -1827,6 +1820,93 @@ export default {
 <style scoped>
 .task-detail-container {
   padding: 20px;
+}
+
+/* 日志样式 */
+.log-item {
+  margin-bottom: 10px;
+  padding: 10px;
+  border-radius: 4px;
+  background-color: #f9f9f9;
+  border-left: 4px solid #d9d9d9;
+}
+
+.log-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 5px;
+  font-size: 12px;
+}
+
+.log-time {
+  margin-right: 10px;
+  color: #999;
+}
+
+.log-level {
+  margin-right: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.log-level-debug {
+  background-color: #e6f7ff;
+  color: #1890ff;
+  border-left-color: #1890ff;
+}
+
+.log-level-info {
+  background-color: #f6ffed;
+  color: #52c41a;
+  border-left-color: #52c41a;
+}
+
+.log-level-warning {
+  background-color: #fffbe6;
+  color: #faad14;
+  border-left-color: #faad14;
+}
+
+.log-level-error {
+  background-color: #fff2f0;
+  color: #f5222d;
+  border-left-color: #f5222d;
+}
+
+.log-level-critical {
+  background-color: #fff1f0;
+  color: #cf1322;
+  border-left-color: #cf1322;
+}
+
+.log-module {
+  color: #666;
+  font-size: 12px;
+}
+
+.log-content {
+  margin-top: 5px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.log-context {
+  margin-top: 5px;
+  font-size: 12px;
+}
+
+.no-logs {
+  text-align: center;
+  color: #999;
+  padding: 20px;
+}
+
+.log-filter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 .page-header {

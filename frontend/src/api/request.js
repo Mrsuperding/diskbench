@@ -32,7 +32,7 @@ service.interceptors.request.use(
 service.interceptors.response.use(
   (response) => {
     // 如果是blob类型的响应，直接返回原始响应对象
-    if (response.config.responseType === 'blob') {
+    if (response.config.responseType === "blob") {
       return response;
     }
 

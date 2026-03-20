@@ -225,7 +225,7 @@ class SSHClient:
             'rw', 'blocksize', 'iodepth', 'filename', 'size', 'runtime', 'numjobs', 
             'iodepth_batch_submit', 'iodepth_batch_complete', 'rwmixread', 'rwmixwrite', 
             'bs', 'ioengine', 'direct', 'sync', 'norandommap', 'randrepeat', 'group_reporting', 
-            'name', 'output', 'stonewall', 'overwrite'
+            'name', 'output', 'stonewall', 'overwrite', 'time_based'
         ]
         
         # 定义参数转换映射
@@ -251,7 +251,7 @@ class SSHClient:
                 return None
         
         # 构建fio命令的辅助函数
-        def build_cmd_parts(params, current_iodepth=None, current_blocksize=None):
+        def build_cmd_parts(params):
             parts = ['fio']
             
             # 添加默认作业名称
@@ -268,7 +268,7 @@ class SSHClient:
             # 处理用户定义的参数
             for key, value in params.items():
                 # 跳过无效参数
-                if key in ['template_id', 'partitions', 'read_write_ratio']:
+                if key in ['template_id', 'partitions', 'read_write_ratio', 'description']:
                     continue
                 
                 # 转换参数名
@@ -276,10 +276,13 @@ class SSHClient:
                 
                 # 获取当前值
                 val = value
-                if key == 'queue_depth' and current_iodepth is not None:
-                    val = current_iodepth.strip()
-                elif (key == 'block_size' or key == 'blocksize') and current_blocksize is not None:
-                    val = current_blocksize.strip()
+                
+                # 特殊处理time_based参数
+                if key == 'time_based':
+                    # 只在time_based为True时添加参数
+                    if val:
+                        parts.append('--time_based=1')
+                    continue
                 
                 # 转换为字符串
                 if isinstance(val, bool):
@@ -305,10 +308,12 @@ class SSHClient:
             if not any('--numjobs=' in part for part in parts):
                 parts.append('--numjobs=1')
             
-            # 处理time_based选项
-            time_based = params.get('time_based', False)
-            if time_based:
-                parts.append('--time_based=1')
+            # 处理额外参数（description字段）
+            extra_params = params.get('description', '').strip()
+            if extra_params:
+                # 将额外参数按空格分割并添加到命令中
+                extra_parts = extra_params.split()
+                parts.extend(extra_parts)
             
             # 添加默认runtime=30（如果用户未指定）
             if not any('--runtime=' in part for part in parts):
@@ -323,12 +328,18 @@ class SSHClient:
         # 获取读写模式列表
         io_type = fio_params.get('io_type', fio_params.get('rw', 'read'))
         io_types = []
-        if isinstance(io_type, str) and ',' in io_type:
+        if isinstance(io_type, list):
+            # 处理前端发送的数组格式
+            io_types = [str(it).strip() for it in io_type if it.strip()]
+        elif isinstance(io_type, str) and ',' in io_type:
+            # 处理逗号分隔的字符串格式
             io_types = [it.strip() for it in io_type.split(',') if it.strip()]
         elif io_type:
+            # 处理单个字符串格式
             io_types = [str(io_type).strip()]
         else:
-            io_types = ['read']  # 默认读写模式
+            # 默认读写模式
+            io_types = ['read']
         
         # 验证并修正读写模式参数
         valid_rw_modes = ['read', 'write', 'randread', 'randwrite', 'rw', 'readwrite', 'randrw']
@@ -393,8 +404,10 @@ class SSHClient:
             current_params = fio_params.copy()
             # 设置当前组合的参数
             current_params['io_type'] = io
+            current_params['queue_depth'] = qd
+            current_params['block_size'] = bs
             
-            single_cmd_parts = build_cmd_parts(current_params, current_iodepth=qd, current_blocksize=bs)
+            single_cmd_parts = build_cmd_parts(current_params)
             
             command = ' '.join(single_cmd_parts)
             
@@ -408,6 +421,14 @@ class SSHClient:
             
             # 执行fio命令
             success, output = self.execute_command(command, timeout=3600)  # 1小时超时
+            
+            # 如果libaio引擎不可用，尝试使用psync引擎
+            if not success and 'engine libaio not loadable' in output:
+                logger.warning("libaio引擎不可用，尝试使用psync引擎")
+                # 修改命令，使用psync引擎
+                command_psync = command.replace('--ioengine=libaio', '--ioengine=psync')
+                logger.info(f"执行fio命令（psync引擎）: {command_psync}")
+                success, output = self.execute_command(command_psync, timeout=3600)
             
             all_results.append({
                 'success': success,

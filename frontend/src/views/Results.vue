@@ -56,8 +56,18 @@
                   taskInfo.test_case_count || 0
                 }}</el-descriptions-item>
                 <el-descriptions-item label="测试用例列表">
-                  <div v-if="taskInfo.io_test_cases && taskInfo.io_test_cases.length > 0">
-                    <el-tag v-for="testCase in taskInfo.io_test_cases" :key="testCase.id" size="small" style="margin-right: 5px; margin-bottom: 5px;">
+                  <div
+                    v-if="
+                      taskInfo.io_test_cases &&
+                      taskInfo.io_test_cases.length > 0
+                    "
+                  >
+                    <el-tag
+                      v-for="testCase in taskInfo.io_test_cases"
+                      :key="testCase.id"
+                      size="small"
+                      style="margin-right: 5px; margin-bottom: 5px"
+                    >
                       {{ testCase.name }}
                     </el-tag>
                   </div>
@@ -153,39 +163,48 @@
             <div class="data-table-section">
               <div class="data-controls">
                 <el-select
-                v-model="selectedNodes"
-                placeholder="选择节点"
-                multiple
-                style="width: 200px; margin-right: 20px"
-                @change="loadFioMetricsFromLogs"
-              >
-                <el-option
-                  v-for="node in taskNodes"
-                  :key="node.id"
-                  :label="node.ip_address"
-                  :value="node.id"
-                ></el-option>
-              </el-select>
+                  v-model="selectedNodes"
+                  placeholder="选择节点"
+                  multiple
+                  style="width: 200px; margin-right: 20px"
+                  @change="loadFioMetricsFromLogs"
+                >
+                  <el-option
+                    v-for="node in taskNodes"
+                    :key="node.id"
+                    :label="node.ip_address"
+                    :value="node.id"
+                  ></el-option>
+                </el-select>
 
-              <el-select
-                v-model="selectedDevices"
-                placeholder="选择分区"
-                multiple
-                style="width: 200px; margin-right: 20px"
-                @change="loadFioMetricsFromLogs"
-              >
-                <el-option
-                  v-for="device in availableDevices"
-                  :key="device"
-                  :label="device"
-                  :value="device"
-                ></el-option>
-              </el-select>
+                <el-select
+                  v-model="selectedDevices"
+                  placeholder="选择分区"
+                  multiple
+                  style="width: 200px; margin-right: 20px"
+                  @change="loadFioMetricsFromLogs"
+                >
+                  <el-option
+                    v-for="device in availableDevices"
+                    :key="device"
+                    :label="device"
+                    :value="device"
+                  ></el-option>
+                </el-select>
 
-                <el-button type="primary" size="small" @click="loadFioMetricsFromLogs">
+                <el-button
+                  type="primary"
+                  size="small"
+                  @click="loadFioMetricsFromLogs"
+                >
                   刷新数据
                 </el-button>
-                <el-button type="primary" size="small" @click="exportData" style="margin-left: 10px">
+                <el-button
+                  type="primary"
+                  size="small"
+                  @click="exportData"
+                  style="margin-left: 10px"
+                >
                   导出数据
                 </el-button>
               </div>
@@ -259,6 +278,11 @@
                   width="140"
                 ></el-table-column>
                 <el-table-column
+                  prop="lat_p9999"
+                  label="p9999时延(ms)"
+                  width="140"
+                ></el-table-column>
+                <el-table-column
                   prop="lat_max"
                   label="最大时延(ms)"
                   width="140"
@@ -276,7 +300,13 @@
 import { ref, reactive, onMounted, computed, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
-import { getTaskLogs, getIOStatMetrics, getRealtimeMetrics, downloadLog, getFioMetricsFromLogs } from "@/api/logs";
+import {
+  getTaskLogs,
+  getIOStatMetrics,
+  getRealtimeMetrics,
+  downloadLog,
+  getFioMetricsFromLogs,
+} from "@/api/logs";
 import tasksApi from "@/api/tasks";
 import localDataManager from "@/utils/localDataManager";
 
@@ -328,7 +358,7 @@ const loadTaskInfo = async () => {
         taskInfo.node_count = response.data.nodes.length;
         if (taskNodes.value.length > 0) {
           // 设置默认选中所有节点
-          selectedNodes.value = taskNodes.value.map(node => node.id);
+          selectedNodes.value = taskNodes.value.map((node) => node.id);
           selectedNode.value = taskNodes.value[0].id;
           loadTaskLogs();
           // 加载可用设备
@@ -340,7 +370,7 @@ const loadTaskInfo = async () => {
     }
   } catch (error) {
     console.error("加载任务信息失败:", error);
-    
+
     // 检查是否是任务不存在的错误
     if (error.response && error.response.status === 404) {
       ElMessage.error(`任务 ${taskId.value} 不存在或已被删除`);
@@ -370,7 +400,7 @@ const loadTaskInfo = async () => {
           taskInfo.node_count = localData.nodes.length;
           if (taskNodes.value.length > 0) {
             // 设置默认选中所有节点
-            selectedNodes.value = taskNodes.value.map(node => node.id);
+            selectedNodes.value = taskNodes.value.map((node) => node.id);
             selectedNode.value = taskNodes.value[0].id;
             loadTaskLogs();
             // 加载可用设备
@@ -408,25 +438,25 @@ const loadAvailableDevices = async () => {
     // 从任务信息中获取节点的分区信息
     if (taskInfo && taskInfo.nodes) {
       const devices = new Set();
-      
+
       // 如果有选中的节点，只显示选中节点的分区
       if (selectedNodes.value && selectedNodes.value.length > 0) {
         // 过滤出选中的节点
-        const selectedTaskNodes = taskInfo.nodes.filter(node => 
-          selectedNodes.value.includes(node.id)
+        const selectedTaskNodes = taskInfo.nodes.filter((node) =>
+          selectedNodes.value.includes(node.id),
         );
-        
+
         // 从选中的节点中获取分区
-        selectedTaskNodes.forEach(node => {
+        selectedTaskNodes.forEach((node) => {
           // 首先检查是否有io_partitions字段（实际存储分区信息的地方）
           if (node.io_partitions && Array.isArray(node.io_partitions)) {
-            node.io_partitions.forEach(partition => {
-              if (typeof partition === 'string') {
+            node.io_partitions.forEach((partition) => {
+              if (typeof partition === "string") {
                 // 如果是字符串形式，直接添加
                 devices.add(partition);
               } else if (partition && partition.path) {
                 // 如果是对象形式，从path中提取设备名
-                const deviceName = partition.path.split('/').pop();
+                const deviceName = partition.path.split("/").pop();
                 devices.add(deviceName);
               } else if (partition && partition.device_name) {
                 // 如果有明确的device_name字段
@@ -435,7 +465,7 @@ const loadAvailableDevices = async () => {
             });
           } else if (node.node_info && node.node_info.partitions) {
             // 备用方案：从node_info.partitions中获取
-            node.node_info.partitions.forEach(partition => {
+            node.node_info.partitions.forEach((partition) => {
               if (partition.device_name) {
                 devices.add(partition.device_name);
               }
@@ -445,16 +475,16 @@ const loadAvailableDevices = async () => {
       } else {
         // 没有选中节点时，显示所有节点的分区
         // 从节点列表中获取所有分区
-        taskInfo.nodes.forEach(node => {
+        taskInfo.nodes.forEach((node) => {
           // 首先检查是否有io_partitions字段（实际存储分区信息的地方）
           if (node.io_partitions && Array.isArray(node.io_partitions)) {
-            node.io_partitions.forEach(partition => {
-              if (typeof partition === 'string') {
+            node.io_partitions.forEach((partition) => {
+              if (typeof partition === "string") {
                 // 如果是字符串形式，直接添加
                 devices.add(partition);
               } else if (partition && partition.path) {
                 // 如果是对象形式，从path中提取设备名
-                const deviceName = partition.path.split('/').pop();
+                const deviceName = partition.path.split("/").pop();
                 devices.add(deviceName);
               } else if (partition && partition.device_name) {
                 // 如果有明确的device_name字段
@@ -463,7 +493,7 @@ const loadAvailableDevices = async () => {
             });
           } else if (node.node_info && node.node_info.partitions) {
             // 备用方案：从node_info.partitions中获取
-            node.node_info.partitions.forEach(partition => {
+            node.node_info.partitions.forEach((partition) => {
               if (partition.device_name) {
                 devices.add(partition.device_name);
               }
@@ -471,7 +501,7 @@ const loadAvailableDevices = async () => {
           }
         });
       }
-      
+
       if (devices.size > 0) {
         availableDevices.value = Array.from(devices);
         selectedDevices.value = Array.from(devices);
@@ -483,12 +513,12 @@ const loadAvailableDevices = async () => {
         if (response && response.data) {
           // 从所有日志中提取唯一设备列表
           const logDevices = new Set();
-          response.data.forEach(log => {
-            if (log.log_type === 'fio' && log.log_filename) {
+          response.data.forEach((log) => {
+            if (log.log_type === "fio" && log.log_filename) {
               // 当前日志文件名格式：任务名_fio_时间戳.log
               // 由于没有明确的设备信息，我们使用默认设备
               // 可以根据需要修改为从节点信息或其他地方获取设备信息
-              logDevices.add('sda'); // 使用默认设备名
+              logDevices.add("sda"); // 使用默认设备名
             }
           });
           availableDevices.value = Array.from(logDevices);
@@ -511,47 +541,47 @@ const loadAvailableDevices = async () => {
 // 从FIO日志文件获取数据
 const loadFioMetricsFromLogs = async () => {
   if (selectedNodes.value.length === 0) {
-    ElMessage.warning('请先选择节点');
+    ElMessage.warning("请先选择节点");
     return;
   }
-  
+
   if (selectedDevices.value.length === 0) {
-    ElMessage.warning('请先选择分区');
+    ElMessage.warning("请先选择分区");
     return;
   }
-  
+
   loading.value = true;
   try {
     // 将数组参数转换为逗号分隔的字符串格式
     const params = {
-      node_ids: selectedNodes.value.join(','),
-      devices: selectedDevices.value.join(',')
+      node_ids: selectedNodes.value.join(","),
+      devices: selectedDevices.value.join(","),
     };
-    
-    console.log('加载FIO日志数据，参数:', params);
-    
+
+    console.log("加载FIO日志数据，参数:", params);
+
     // 调用API从FIO日志文件获取数据
     const response = await getFioMetricsFromLogs(taskId.value, params);
-    
-    console.log('FIO日志数据加载完成，响应:', response);
-    
+
+    console.log("FIO日志数据加载完成，响应:", response);
+
     if (response && response.data) {
       rawIOStatData.value = response.data;
-      console.log('FIO日志数据:', rawIOStatData.value);
+      console.log("FIO日志数据:", rawIOStatData.value);
       updateDataTable();
       ElMessage.success(`成功加载 ${response.data.length} 条数据`);
     } else {
       // 确保数据为空时也能正确更新表格
       rawIOStatData.value = [];
       updateDataTable();
-      ElMessage.info('未找到数据');
+      ElMessage.info("未找到数据");
     }
   } catch (error) {
     console.error("加载FIO日志数据失败:", error);
     // 失败时使用空数据，避免显示错误数据
     rawIOStatData.value = [];
     updateDataTable();
-    ElMessage.error('加载数据失败，请重试');
+    ElMessage.error("加载数据失败，请重试");
   } finally {
     loading.value = false;
   }
@@ -561,10 +591,10 @@ const loadFioMetricsFromLogs = async () => {
 const generateMockData = () => {
   const mockData = [];
   const timestamp = new Date();
-  
+
   // 为每个选中的节点和设备生成模拟数据
-  selectedNodes.value.forEach(nodeId => {
-    selectedDevices.value.forEach(device => {
+  selectedNodes.value.forEach((nodeId) => {
+    selectedDevices.value.forEach((device) => {
       for (let i = 0; i < 10; i++) {
         const data = {
           node_id: nodeId,
@@ -576,13 +606,13 @@ const generateMockData = () => {
           write_kbps: (Math.random() * 10000).toFixed(2),
           await_time: (Math.random() * 10).toFixed(2),
           svctm: (Math.random() * 5).toFixed(2),
-          util: (Math.random() * 100).toFixed(2)
+          util: (Math.random() * 100).toFixed(2),
         };
         mockData.push(data);
       }
     });
   });
-  
+
   return mockData;
 };
 
@@ -629,7 +659,12 @@ const loadTaskLogs = async () => {
   } catch (error) {
     console.error("加载任务日志失败:", error);
     console.error("错误详情:", error.response?.data || error.message || error);
-    console.error("请求URL:", `/api/logs/task/${taskId.value}`, "节点ID:", selectedNode.value);
+    console.error(
+      "请求URL:",
+      `/api/logs/task/${taskId.value}`,
+      "节点ID:",
+      selectedNode.value,
+    );
   } finally {
     loading.value = false;
   }
@@ -703,23 +738,23 @@ const updateDataTable = () => {
 
   // 按节点过滤（支持多选）
   if (selectedNodes.value && selectedNodes.value.length > 0) {
-    filteredData = filteredData.filter(
-      (item) => selectedNodes.value.includes(item.node_id),
+    filteredData = filteredData.filter((item) =>
+      selectedNodes.value.includes(item.node_id),
     );
   }
 
   // 按设备过滤（支持多选）
   if (selectedDevices.value && selectedDevices.value.length > 0) {
-    filteredData = filteredData.filter(
-      (item) => selectedDevices.value.includes(item.device),
+    filteredData = filteredData.filter((item) =>
+      selectedDevices.value.includes(item.device),
     );
   }
 
   // 按IO模型名称分组，实现多个分区的IOPS和带宽相加
   const aggregatedData = {};
-  
+
   filteredData.forEach((item) => {
-    const key = item.io_model_name || '未知IO模型';
+    const key = item.io_model_name || "未知IO模型";
     if (!aggregatedData[key]) {
       aggregatedData[key] = {
         io_model_name: key,
@@ -734,48 +769,58 @@ const updateDataTable = () => {
         read_kbps: 0,
         write_kbps: 0,
         lat_p99: 0,
+        lat_p9999: 0,
         lat_max: 0,
-        count: 0
+        count: 0,
       };
     }
-    
+
     // 累加指标
-    aggregatedData[key].total_iops += parseFloat(item.read_iops || 0) + parseFloat(item.write_iops || 0);
-    aggregatedData[key].total_kbps += parseFloat(item.read_kbps || 0) + parseFloat(item.write_kbps || 0);
+    aggregatedData[key].total_iops +=
+      parseFloat(item.read_iops || 0) + parseFloat(item.write_iops || 0);
+    aggregatedData[key].total_kbps +=
+      parseFloat(item.read_kbps || 0) + parseFloat(item.write_kbps || 0);
     aggregatedData[key].read_iops += parseFloat(item.read_iops || 0);
     aggregatedData[key].write_iops += parseFloat(item.write_iops || 0);
     aggregatedData[key].read_kbps += parseFloat(item.read_kbps || 0);
     aggregatedData[key].write_kbps += parseFloat(item.write_kbps || 0);
     aggregatedData[key].await_time += parseFloat(item.await_time || 0);
     aggregatedData[key].lat_p99 += parseFloat(item.lat_p99 || 0);
-    aggregatedData[key].lat_max = Math.max(aggregatedData[key].lat_max, parseFloat(item.lat_max || 0));
-    aggregatedData[key].devices.push(item.device);
+    aggregatedData[key].lat_p9999 += parseFloat(item.lat_p9999 || 0);
+    aggregatedData[key].lat_max = Math.max(
+      aggregatedData[key].lat_max,
+      parseFloat(item.lat_max || 0),
+    );
+    // 确保设备名称不重复
+    if (!aggregatedData[key].devices.includes(item.device)) {
+      aggregatedData[key].devices.push(item.device);
+    }
     aggregatedData[key].count++;
   });
-  
+
   // 转换为数组并计算平均值
   displayedData.value = Object.values(aggregatedData).map((item) => {
     // 处理IO模型开始时间和结束时间
     let ioStartDate = new Date();
     let ioEndDate = new Date();
-    
+
     if (item.io_start_time) {
       ioStartDate = new Date(item.io_start_time);
     } else if (item.collection_time) {
       ioStartDate = new Date(item.collection_time);
     }
-    
+
     if (item.io_end_time) {
       ioEndDate = new Date(item.io_end_time);
     } else {
       ioEndDate = ioStartDate;
     }
-    
+
     return {
       io_model_name: item.io_model_name,
       io_start_time: ioStartDate.toLocaleString(),
       io_end_time: ioEndDate.toLocaleString(),
-      device: item.devices.join(', '),
+      device: item.devices.join(", "),
       total_iops: item.total_iops.toFixed(2),
       total_kbps: item.total_kbps.toFixed(2),
       await_time: (item.await_time / item.count).toFixed(2),
@@ -784,7 +829,8 @@ const updateDataTable = () => {
       read_kbps: item.read_kbps.toFixed(2),
       write_kbps: item.write_kbps.toFixed(2),
       lat_p99: (item.lat_p99 / item.count).toFixed(2),
-      lat_max: item.lat_max.toFixed(2)
+      lat_p9999: (item.lat_p9999 / item.count).toFixed(2),
+      lat_max: item.lat_max.toFixed(2),
     };
   });
 };
@@ -795,8 +841,6 @@ const viewLogDetails = (logId) => {
   router.push(`/logs?logId=${logId}`);
 };
 
-
-
 // 处理标签页切换
 const handleTabChange = (tabName) => {
   console.log("切换到标签页:", tabName);
@@ -804,9 +848,12 @@ const handleTabChange = (tabName) => {
     console.log("准备加载详细数据...");
     // 确保有选中的节点和设备
     if (selectedNodes.value.length === 0 && taskNodes.value.length > 0) {
-      selectedNodes.value = taskNodes.value.map(node => node.id);
+      selectedNodes.value = taskNodes.value.map((node) => node.id);
     }
-    if (selectedDevices.value.length === 0 && availableDevices.value.length > 0) {
+    if (
+      selectedDevices.value.length === 0 &&
+      availableDevices.value.length > 0
+    ) {
       selectedDevices.value = Array.from(availableDevices.value);
     }
     // 加载FIO日志数据
@@ -862,6 +909,7 @@ const exportData = () => {
     "读吞吐量(KB/s)",
     "写吞吐量(KB/s)",
     "p99时延(ms)",
+    "p9999时延(ms)",
     "最大时延(ms)",
   ];
   const csvContent = [
@@ -880,6 +928,7 @@ const exportData = () => {
         row.read_kbps,
         row.write_kbps,
         row.lat_p99,
+        row.lat_p9999,
         row.lat_max,
       ].join(","),
     ),

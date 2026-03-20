@@ -17,13 +17,13 @@ class LocalDataManager {
   async extractZipFile(zipBlob) {
     try {
       // 使用JSZip库解压文件
-      const JSZip = require('jszip');
+      const JSZip = require("jszip");
       const zip = new JSZip();
       const result = await zip.loadAsync(zipBlob);
       const files = {};
       for (const [name, file] of Object.entries(result.files)) {
         if (!file.dir) {
-          files[name] = await file.async('text');
+          files[name] = await file.async("text");
         }
       }
       return files;

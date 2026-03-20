@@ -26,7 +26,7 @@ from .test_result import TestResult, TestResultAggregation
 from .task_space import TaskSpace, TaskSpaceMember
 from .operation_log import OperationLog
 from .system_metric import SystemMetric
-from .test_log import TestLog, IOStatMetric
+from .test_log import TestLog, IOStatMetric, IOPerformanceData
 
 __all__ = [
     'db',
@@ -45,5 +45,6 @@ __all__ = [
     'OperationLog',
     'SystemMetric',
     'TestLog',
-    'IOStatMetric'
+    'IOStatMetric',
+    'IOPerformanceData'
 ]

@@ -2,6 +2,7 @@
 # 用于实现任务日志的实时打印功能
 
 import logging
+from datetime import datetime
 from flask import request
 from flask_socketio import emit, join_room, leave_room
 from app.models import TaskExecution, TestTask
@@ -101,7 +102,7 @@ def register_socket_events(socketio):
             logger.error('离开任务房间失败: %s', str(e))
             emit('error', {'message': f'离开房间失败: {str(e)}'})
 
-def send_task_log(task_id, log_content):
+def send_task_log(task_id, log_content, level='INFO', module='tasks', context=None):
     """向指定任务的所有客户端发送日志"""
     """
     发送任务日志到WebSocket客户端
@@ -109,14 +110,26 @@ def send_task_log(task_id, log_content):
     Args:
         task_id: 任务ID
         log_content: 日志内容
+        level: 日志级别
+        module: 模块名称
+        context: 上下文信息
     """
     try:
         room = str(task_id)
+        # 构建结构化日志数据
+        log_data = {
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'level': level,
+            'module': module,
+            'message': log_content,
+            'context': context or {'task_id': task_id}
+        }
+        
         # 发送日志到房间内所有客户端
         if global_socketio:
-            global_socketio.emit('task_log', {'log': log_content}, room=room)
-            logger.info('已发送日志到任务 %s 的房间: %s', task_id, log_content[:100] + '...' if len(log_content) > 100 else log_content)
+            global_socketio.emit('task_log', {'data': log_data}, room=room)
+            logger.info('已发送日志到任务 %s 的房间', task_id, extra={'context': {'task_id': task_id, 'log_level': level}})
         else:
-            logger.warning('全局socketio对象未初始化，无法发送日志')
+            logger.warning('全局socketio对象未初始化，无法发送日志', extra={'context': {'task_id': task_id}})
     except Exception as e:
-        logger.error('发送任务日志失败: %s', str(e))
+        logger.error('发送任务日志失败: %s', str(e), extra={'context': {'task_id': task_id}})

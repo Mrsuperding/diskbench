@@ -5,7 +5,7 @@ export const getTaskLogs = (taskId, params = {}) => {
   return request({
     url: "/logs/task/" + taskId,
     method: "get",
-    params
+    params,
   });
 };
 
@@ -13,7 +13,7 @@ export const getTaskLogs = (taskId, params = {}) => {
 export const getLogDetail = (logId) => {
   return request({
     url: "/logs/" + logId,
-    method: "get"
+    method: "get",
   });
 };
 
@@ -22,7 +22,7 @@ export const getIOStatMetrics = (logId, params = {}) => {
   return request({
     url: "/logs/" + logId + "/iostat-metrics",
     method: "get",
-    params
+    params,
   });
 };
 
@@ -31,7 +31,7 @@ export const getJitterData = (logId, params = {}) => {
   return request({
     url: "/logs/" + logId + "/jitter",
     method: "get",
-    params
+    params,
   });
 };
 
@@ -39,7 +39,7 @@ export const getJitterData = (logId, params = {}) => {
 export const getIOStatJitter = (logId) => {
   return request({
     url: "/logs/" + logId + "/iostat-jitter",
-    method: "get"
+    method: "get",
   });
 };
 
@@ -47,7 +47,7 @@ export const getIOStatJitter = (logId) => {
 export const getFIOResults = (logId) => {
   return request({
     url: "/logs/" + logId + "/fio-results",
-    method: "get"
+    method: "get",
   });
 };
 
@@ -56,7 +56,7 @@ export const getRealtimeMetrics = (taskId, params = {}) => {
   return request({
     url: "/logs/task/" + taskId + "/realtime-metrics",
     method: "get",
-    params
+    params,
   });
 };
 
@@ -65,7 +65,7 @@ export const getFioMetricsFromLogs = (taskId, params = {}) => {
   return request({
     url: "/logs/task/" + taskId + "/realtime-metrics",
     method: "get",
-    params
+    params,
   });
 };
 
@@ -74,7 +74,7 @@ export const downloadLog = async (logId) => {
   const response = await request({
     url: "/logs/" + logId + "/download",
     method: "get",
-    responseType: "blob"
+    responseType: "blob",
   });
 
   const contentDisposition = response.headers["content-disposition"];

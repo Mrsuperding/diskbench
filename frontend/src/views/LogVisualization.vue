@@ -140,7 +140,7 @@
 
 <script setup>
 import { ref, onMounted, reactive } from "vue";
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 import { VChart } from "vue-echarts";
 import * as echarts from "echarts";
 import { RefreshRight } from "@element-plus/icons-vue";
@@ -149,6 +149,8 @@ import nodeApi from "@/api/nodes";
 
 // 路由相关
 const router = useRouter();
+const route = useRoute();
+const taskId = ref(route.params.id || 0);
 
 // 图表相关
 const iostatChartRef = ref(null);
@@ -245,11 +247,16 @@ const loadTestLogs = async () => {
     }
 
     // 这里假设API路径为 /logs/test-logs
-    const response = await taskApi.getTaskLogs(0, params); // 暂时用0作为任务ID
+    const response = await taskApi.getTaskLogs(taskId.value, params);
 
     if (response && response.data) {
-      testLogs.value = response.data.items;
-      totalLogs.value = response.data.total;
+      if (response.data.items) {
+        testLogs.value = response.data.items;
+        totalLogs.value = response.data.total;
+      } else {
+        testLogs.value = response.data;
+        totalLogs.value = response.data.length;
+      }
     }
   } catch (error) {
     console.error("加载测试日志失败:", error);

@@ -233,15 +233,15 @@ const goBack = () => {
 };
 
 // 初始化WebSocket连接
-  const initWebSocket = () => {
-    console.log("初始化WebSocket连接，任务ID:", taskId.value);
-    // 创建WebSocket连接
-    socket.value = io("http://localhost:5002", {
-      transports: ["websocket"],
-      reconnection: true,
-      reconnectionAttempts: 5,
-      reconnectionDelay: 1000,
-    });
+const initWebSocket = () => {
+  console.log("初始化WebSocket连接，任务ID:", taskId.value);
+  // 创建WebSocket连接
+  socket.value = io("http://localhost:5002", {
+    transports: ["websocket"],
+    reconnection: true,
+    reconnectionAttempts: 5,
+    reconnectionDelay: 1000,
+  });
 
   // 连接成功
   socket.value.on("connect", () => {
@@ -886,7 +886,7 @@ const processIOJitterMetrics = (metrics) => {
   const deviceData = {};
 
   // 如果是单个指标对象，直接添加到现有数据中
-  if (metrics.length === 1 && typeof metrics[0] === 'object') {
+  if (metrics.length === 1 && typeof metrics[0] === "object") {
     const metric = metrics[0];
     const timestamp = new Date(metric.collection_time).toLocaleTimeString();
     devices.add(metric.device);
@@ -910,7 +910,9 @@ const processIOJitterMetrics = (metrics) => {
 
     // 限制数据点数量，避免图表过于拥挤
     const maxDataPoints = 100;
-    if (iostatMetrics.devices[metric.device].timestamps.length >= maxDataPoints) {
+    if (
+      iostatMetrics.devices[metric.device].timestamps.length >= maxDataPoints
+    ) {
       iostatMetrics.devices[metric.device].timestamps.shift();
       iostatMetrics.devices[metric.device].readIOPS.shift();
       iostatMetrics.devices[metric.device].writeIOPS.shift();
@@ -935,7 +937,9 @@ const processIOJitterMetrics = (metrics) => {
     iostatMetrics.devices[metric.device].writeLatency.push(metric.await_time);
     iostatMetrics.devices[metric.device].diskUtilization.push(metric.util);
     iostatMetrics.devices[metric.device].readThroughput.push(metric.read_kbps);
-    iostatMetrics.devices[metric.device].writeThroughput.push(metric.write_kbps);
+    iostatMetrics.devices[metric.device].writeThroughput.push(
+      metric.write_kbps,
+    );
     iostatMetrics.devices[metric.device].totalThroughput.push(
       metric.read_kbps + metric.write_kbps,
     );
@@ -991,7 +995,9 @@ const processIOJitterMetrics = (metrics) => {
   }
 
   // 更新可用设备列表
-  availableDevices.value = Array.from(new Set([...availableDevices.value, ...devices]));
+  availableDevices.value = Array.from(
+    new Set([...availableDevices.value, ...devices]),
+  );
   if (availableDevices.value.length > 0 && !selectedDevice.value) {
     selectedDevice.value = availableDevices.value[0];
   }

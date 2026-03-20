@@ -97,23 +97,45 @@ class ProductionConfig(Config):
         # 生产环境日志配置
         import logging
         from logging.handlers import RotatingFileHandler
+        import json
+        from datetime import datetime
+        
+        # 自定义JSON格式化器
+        class JSONFormatter(logging.Formatter):
+            def format(self, record):
+                log_record = {
+                    'timestamp': datetime.utcnow().isoformat() + 'Z',
+                    'level': record.levelname,
+                    'module': record.module,
+                    'message': record.getMessage(),
+                    'context': getattr(record, 'context', {})
+                }
+                return json.dumps(log_record)
         
         if not os.path.exists('logs'):
             os.mkdir('logs')
         
+        # 按日期命名日志文件
+        import time
+        log_filename = time.strftime('logs/app-%Y-%m-%d.log')
+        
         file_handler = RotatingFileHandler(
-            'logs/io_platform.log',
+            log_filename,
             maxBytes=1024 * 1024 * 100,  # 100MB
-            backupCount=10
+            backupCount=7  # 保留7天
         )
-        file_handler.setFormatter(logging.Formatter(
-            '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
-        ))
+        file_handler.setFormatter(JSONFormatter())
         file_handler.setLevel(logging.INFO)
         app.logger.addHandler(file_handler)
         
+        # 同时输出到控制台，便于开发调试
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(JSONFormatter())
+        console_handler.setLevel(logging.INFO)
+        app.logger.addHandler(console_handler)
+        
         app.logger.setLevel(logging.INFO)
-        app.logger.info('IO Platform startup')
+        app.logger.info('IO Platform startup', extra={'context': {'operation': 'startup'}})
 
 # 配置映射
 config = {

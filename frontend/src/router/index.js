@@ -59,6 +59,12 @@ const routes = [
         meta: { title: "任务详情", icon: "List", hidden: true },
       },
       {
+        path: "/task-detail-test",
+        name: "TaskDetailTest",
+        component: () => import("@/views/TaskDetailTest.vue"),
+        meta: { title: "任务详情测试", icon: "List", hidden: true },
+      },
+      {
         path: "/tasks/:id/jitter-chart",
         name: "IOJitterChart",
         component: () => import("@/views/IOJitterChart.vue"),

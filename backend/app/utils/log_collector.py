@@ -4,7 +4,7 @@ import datetime
 import json
 import logging
 import statistics
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.models import db, TestLog, IOStatMetric
 from loguru import logger
 
@@ -465,7 +465,7 @@ class LogCollector:
                         util = float(parts[9]) if len(parts) > 9 else 0
                     
                     metrics.append({
-                        'timestamp': current_time - datetime.timedelta(seconds=len(lines[header_index+1:])-i),
+                        'timestamp': current_time - timedelta(seconds=len(lines[header_index+1:])-i),
                         'device': device,
                         'read_kbps': read_kbps,
                         'write_kbps': write_kbps,
@@ -531,6 +531,10 @@ class LogCollector:
                 lat_p99_match = re.search(r'clat percentiles \(nsec\):.*?99\.00th=\[(.*?)\]', job_section, re.DOTALL)
                 lat_p99 = lat_p99_match.group(1).strip() if lat_p99_match else '0'
                 
+                # 提取P9999延迟指标
+                lat_p9999_match = re.search(r'clat percentiles \(nsec\):.*?99\.99th=\[(.*?)\]', job_section, re.DOTALL)
+                lat_p9999 = lat_p9999_match.group(1).strip() if lat_p9999_match else '0'
+                
                 # 检查lat_p99的值，如果是小数形式（秒级），直接使用
                 try:
                     lat_p99_val = float(lat_p99)
@@ -595,6 +599,7 @@ class LogCollector:
                     'write_bw': convert_bw(write_bw),
                     'lat': convert_lat(lat),
                     'lat_p99': convert_lat(lat_p99),  # 添加P99延迟
+                    'lat_p9999': convert_lat(lat_p9999),  # 添加P9999延迟
                     'lat_max': convert_lat(lat_max)  # 添加最大延迟
                 })
             
@@ -630,13 +635,15 @@ class LogCollector:
                         'bw': first_job['read_bw'],
                         'iops': first_job['read_iops'],
                         'lat': first_job['lat'],
-                        'lat_p99': first_job.get('lat_p99', 0)  # 添加P99延迟
+                        'lat_p99': first_job.get('lat_p99', 0),  # 添加P99延迟
+                        'lat_p9999': first_job.get('lat_p9999', 0)  # 添加P9999延迟
                     },
                     'write': {
                         'bw': first_job['write_bw'],
                         'iops': first_job['write_iops'],
                         'lat': first_job['lat'],
-                        'lat_p99': first_job.get('lat_p99', 0)  # 添加P99延迟
+                        'lat_p99': first_job.get('lat_p99', 0),  # 添加P99延迟
+                        'lat_p9999': first_job.get('lat_p9999', 0)  # 添加P9999延迟
                     }
                 }
             
@@ -679,6 +686,7 @@ class LogCollector:
                 'lat_min': global_stats.get('lat_ns', {}).get('min', 0) / 1000000,  # 转换为ms
                 'lat_max': global_stats.get('lat_ns', {}).get('max', 0) / 1000000,  # 转换为ms
                 'lat_p99': global_stats.get('lat_ns', {}).get('percentile', {}).get('99.000000', 0) / 1000000,  # 转换为ms
+                'lat_p9999': global_stats.get('lat_ns', {}).get('percentile', {}).get('99.990000', 0) / 1000000,  # 转换为ms
                 'clat_ns': global_stats.get('clat_ns', {}).get('mean', 0) / 1000000,  # 转换为ms
                 'slat_ns': global_stats.get('slat_ns', {}).get('mean', 0) / 1000000,  # 转换为ms
             }
@@ -687,6 +695,7 @@ class LogCollector:
             metrics['bw'] = metrics['global']['bw']
             metrics['iops'] = metrics['global']['iops']
             metrics['lat_p99'] = metrics['global']['lat_p99']
+            metrics['lat_p9999'] = metrics['global']['lat_p9999']
             metrics['lat_max'] = metrics['global']['lat_max']
             
             # 提取作业统计信息
@@ -710,6 +719,7 @@ class LogCollector:
                     'iops': rw_stats.get('iops', 0),
                     'lat': rw_stats.get('lat_ns', {}).get('mean', 0) / 1000000,  # 转换为ms
                     'lat_p99': rw_stats.get('lat_ns', {}).get('percentile', {}).get('99.000000', 0) / 1000000,  # 转换为ms
+                    'lat_p9999': rw_stats.get('lat_ns', {}).get('percentile', {}).get('99.990000', 0) / 1000000,  # 转换为ms
                     'lat_min': rw_stats.get('lat_ns', {}).get('min', 0) / 1000000,  # 转换为ms
                     'lat_max': rw_stats.get('lat_ns', {}).get('max', 0) / 1000000,  # 转换为ms
                     'clat': rw_stats.get('clat_ns', {}).get('mean', 0) / 1000000,  # 转换为ms
@@ -748,9 +758,9 @@ class LogCollector:
     def extract_test_config(self, content):
         """从日志内容中提取测试配置信息"""
         try:
-            # 提取块大小
-            block_size_match = re.search(r'bs=(.*?),', content)
-            block_size = block_size_match.group(1).strip() if block_size_match else '4k'
+            # 提取块大小，同时支持bs和blocksize参数
+            block_size_match = re.search(r'(bs|blocksize)=(.*?),', content)
+            block_size = block_size_match.group(2).strip() if block_size_match else '4k'
             
             # 提取读写模式
             rw_type_match = re.search(r'rw=(read|write|randread|randwrite|randrw|rw)', content)
@@ -915,235 +925,31 @@ class LogCollector:
             logger.error(f"获取任务日志失败: {e}", exc_info=True)
     
     def get_realtime_metrics(self, task_id, node_id_list, device_list):
-        """获取FIO日志指标数据（从本地日志文件获取，不上节点查询）"""
+        """获取实时FIO日志指标数据（从数据库中获取）"""
         try:
-            logger.info(f"获取任务 {task_id} 的FIO日志指标数据，节点列表: {node_id_list}，设备列表: {device_list}")
+            logger.info(f"获取任务 {task_id} 的实时FIO日志指标数据，节点列表: {node_id_list}，设备列表: {device_list}")
             
-            # 查询任务的所有FIO日志记录
-            query = TestLog.query.filter_by(test_task_id=task_id, log_type='fio')
+            # 从数据库中获取性能数据
+            from app.models.test_log import IOPerformanceData
             
-            # 如果提供了节点ID列表，添加节点过滤
-            if node_id_list:
-                query = query.filter(TestLog.node_id.in_(node_id_list))
+            # 查询性能数据
+            performance_data_list = IOPerformanceData.get_by_task_and_node_and_device(
+                test_task_id=task_id,
+                node_id_list=node_id_list,
+                device_list=device_list
+            )
             
-            # 获取所有符合条件的日志记录
-            logs = query.all()
-            
-            # 收集所有指标数据
+            # 转换为前端需要的格式
             all_metrics = []
-            
-            # 计算节点数量和卷数量
-            node_count = len(node_id_list) if node_id_list else 1
-            vol_count = len(device_list) if device_list else 1
-            
-            for log in logs:
-                try:
-                    # 检查日志文件是否存在
-                    if not os.path.exists(log.log_path):
-                        logger.warning(f"日志文件不存在: {log.log_path}")
-                        continue
-                    
-                    # 尝试解析FIO日志文件
-                    fio_results = None
-                    log_filename = os.path.basename(log.log_path)
-                    
-                    # 从日志内容中提取设备信息
-                    # 读取日志文件内容，查找设备名称
-                    device = 'unknown'
-                    test_config = {
-                        'block_size': '4k',
-                        'rw_type': 'randread',
-                        'queue_depth': '1',
-                        'thread_count': '1'
-                    }
-                    
-                    try:
-                        with open(log.log_path, 'r', encoding='utf-8', errors='ignore') as f:
-                            content = f.read()
-                            # 从日志内容中提取设备名称，格式如 "vdb: ios=3385/1"
-                            device_match = re.search(r'Disk stats \(read/write\):\s*\n\s*(\w+):', content)
-                            if device_match:
-                                device = device_match.group(1)
-                                logger.info(f"从日志内容中提取到设备名称: {device}")
-                            
-                            # 提取测试配置
-                            test_config = self.extract_test_config(content)
-                    except Exception as e:
-                        logger.warning(f"读取日志文件内容失败: {e}")
-                    
-                    # 检查设备是否在过滤列表中
-                    # 如果设备列表为空，则返回所有设备的数据
-                    # 如果设备列表不为空，但是设备名为'unknown'，也返回数据（因为无法确定设备）
-                    if device_list and device != 'unknown' and device not in device_list:
-                        logger.info(f"设备 {device} 不在过滤列表 {device_list} 中，跳过该日志")
-                        continue
-                    
-                    # 生成IO模型名称
-                    io_model_name = self.generate_io_model_name(
-                        node_count,
-                        vol_count,
-                        test_config['block_size'],
-                        test_config['rw_type'],
-                        test_config['queue_depth'],
-                        test_config['thread_count']
-                    )
-                    
-                    # 检查是否为JSON格式日志
-                    if log_filename.endswith('.json'):
-                        # 解析FIO JSON日志
-                        fio_results = self._parse_fio_json_log(log.log_path)
-                        
-                        if not fio_results:
-                            logger.warning(f"解析FIO JSON日志失败，结果为空: {log.log_path}")
-                            continue
-                        
-                        # 使用生成的IO模型名称
-                        # 不再从jobs中获取名称，而是使用我们生成的格式
-                        
-                        # 提取详细的读写指标
-                        # 从detailed中获取读写指标
-                        detailed_metrics = fio_results.get('detailed', {})
-                        read_metrics = detailed_metrics.get('read', {})
-                        write_metrics = detailed_metrics.get('write', {})
-                        
-                        # 提取开始时间和结束时间
-                        start_time = fio_results.get('start_time', 0)
-                        end_time = fio_results.get('end_time', 0)
-                        
-                        # 转换为统一格式
-                        metric_data = {
-                            'node_id': log.node_id,
-                            'device': device,
-                            'collection_time': log.collection_time,
-                            'io_model_name': io_model_name,
-                            'io_start_time': datetime.fromtimestamp(start_time),
-                            'io_end_time': datetime.fromtimestamp(end_time),
-                            'read_iops': read_metrics.get('iops', 0),
-                            'write_iops': write_metrics.get('iops', 0),
-                            'read_kbps': read_metrics.get('bw', 0),
-                            'write_kbps': write_metrics.get('bw', 0),
-                            'await_time': read_metrics.get('lat', 0),
-                            'lat_p99': (read_metrics.get('lat_p99', 0) + write_metrics.get('lat_p99', 0)) / 2,  # 平均p99延迟
-                            'lat_max': max(read_metrics.get('lat_max', 0), write_metrics.get('lat_max', 0)),  # 最大延迟
-                            'svctm': 0,  # FIO日志中可能没有这个字段，使用默认值
-                            'util': 0  # FIO日志中可能没有这个字段，使用默认值
-                        }
-                    else:
-                        # 解析普通FIO日志
-                        fio_results = self._parse_fio_log(log.log_path)
-                        
-                        # 处理FIO日志解析结果
-                        if isinstance(fio_results, dict):
-                            # 使用生成的IO模型名称
-                            # 不再从jobs中获取名称，而是使用我们生成的格式
-                            
-                            # 提取全局指标
-                            global_metrics = fio_results.get('global', {})
-                            jobs = fio_results.get('jobs', [])
-                            
-                            # 处理读写指标
-                            # 检查是否有read/write字段，如果没有，直接使用jobs中的指标
-                            if 'read' in global_metrics and 'write' in global_metrics:
-                                read_metrics = global_metrics.get('read', {})
-                                write_metrics = global_metrics.get('write', {})
-                                # 从jobs中获取lat_p99和lat_max值
-                                if jobs:
-                                    first_job = jobs[0]
-                                    read_metrics['lat_p99'] = first_job.get('lat_p99', 0)
-                                    write_metrics['lat_p99'] = first_job.get('lat_p99', 0)
-                                    read_metrics['lat_max'] = first_job.get('lat_max', 0)
-                                    write_metrics['lat_max'] = first_job.get('lat_max', 0)
-                            elif jobs:
-                                # 如果没有read/write字段，使用jobs中的指标
-                                first_job = jobs[0]
-                                read_metrics = {
-                                    'iops': first_job.get('read_iops', 0),
-                                    'bw': first_job.get('read_bw', 0),
-                                    'lat': first_job.get('lat', 0),
-                                    'lat_p99': first_job.get('lat_p99', 0),  # 添加p99延迟
-                                    'lat_max': first_job.get('lat_max', 0)  # 添加最大延迟
-                                }
-                                write_metrics = {
-                                    'iops': first_job.get('write_iops', 0),
-                                    'bw': first_job.get('write_bw', 0),
-                                    'lat': first_job.get('lat', 0),
-                                    'lat_p99': first_job.get('lat_p99', 0),  # 添加p99延迟
-                                    'lat_max': first_job.get('lat_max', 0)  # 添加最大延迟
-                                }
-                            else:
-                                # 如果没有任何指标，使用默认值
-                                read_metrics = {
-                                    'iops': 0,
-                                    'bw': 0,
-                                    'lat': 0,
-                                    'lat_p99': 0,  # 添加p99延迟默认值
-                                    'lat_max': 0  # 添加最大延迟默认值
-                                }
-                                write_metrics = {
-                                    'iops': 0,
-                                    'bw': 0,
-                                    'lat': 0,
-                                    'lat_p99': 0,  # 添加p99延迟默认值
-                                    'lat_max': 0  # 添加最大延迟默认值
-                                }
-                            
-                            # 尝试从FIO日志中提取最大延迟作为备用方案
-                            lat_max = 0
-                            try:
-                                with open(log.log_path, 'r', encoding='utf-8', errors='ignore') as f:
-                                    content = f.read()
-                                    # 尝试提取最大延迟
-                                    lat_max_match = re.search(r'clat \(nsec\):.*?max=(.*?),', content, re.DOTALL)
-                                    if lat_max_match:
-                                        lat_max_str = lat_max_match.group(1).strip()
-                                        # 处理带有单位的延迟值
-                                        lat_max_val = 0
-                                        if lat_max_str.endswith('k'):
-                                            lat_max_val = float(lat_max_str[:-1]) * 1000
-                                        elif lat_max_str.endswith('m'):
-                                            lat_max_val = float(lat_max_str[:-1]) * 1000000
-                                        else:
-                                            try:
-                                                lat_max_val = float(lat_max_str)
-                                            except:
-                                                lat_max_val = 0
-                                        lat_max = lat_max_val / 1000000  # 转换为毫秒
-                            except Exception as e:
-                                logger.warning(f"提取最大延迟失败: {e}")
-                            
-                            # 如果从jobs中获取了lat_max，使用jobs中的值
-                            if jobs:
-                                first_job = jobs[0]
-                                job_lat_max = first_job.get('lat_max', 0)
-                                if job_lat_max > 0:
-                                    lat_max = job_lat_max
-                            
-                            # 转换为统一格式
-                            metric_data = {
-                                'node_id': log.node_id,
-                                'device': device,
-                                'collection_time': log.collection_time,
-                                'io_model_name': io_model_name,
-                                'io_start_time': log.collection_time,  # 普通FIO日志中没有开始时间，使用收集时间
-                                'io_end_time': log.collection_time,  # 普通FIO日志中没有结束时间，使用收集时间
-                                'read_iops': float(read_metrics.get('iops', 0)),
-                                'write_iops': float(write_metrics.get('iops', 0)),
-                                'read_kbps': float(read_metrics.get('bw', 0)),
-                                'write_kbps': float(write_metrics.get('bw', 0)),
-                                'await_time': float(read_metrics.get('lat', 0)) if read_metrics.get('lat') else float(write_metrics.get('lat', 0)),
-                                'lat_p99': (float(read_metrics.get('lat_p99', 0)) + float(write_metrics.get('lat_p99', 0))) / 2,  # 平均p99延迟
-                                'lat_max': max(float(read_metrics.get('lat_max', 0)), float(write_metrics.get('lat_max', 0)), lat_max),  # 使用最大值
-                                'svctm': 0,  # FIO日志中可能没有这个字段，使用默认值
-                                'util': 0  # FIO日志中可能没有这个字段，使用默认值
-                            }
-                        else:
-                            logger.warning(f"解析普通FIO日志失败，结果不是字典: {log.log_path}")
-                            continue
-                    
-                    all_metrics.append(metric_data)
-                except Exception as e:
-                    logger.error(f"解析日志 {log.log_path} 失败: {e}")
-                    continue
+            for data in performance_data_list:
+                metric_data = data.to_dict()
+                # 转换时间格式为ISO格式字符串
+                if metric_data['io_start_time']:
+                    metric_data['io_start_time'] = data.io_start_time.isoformat()
+                if metric_data['io_end_time']:
+                    metric_data['io_end_time'] = data.io_end_time.isoformat()
+                metric_data['collection_time'] = data.collection_time.isoformat()
+                all_metrics.append(metric_data)
             
             # 按节点和分区分组，便于前端聚合
             grouped_metrics = {}
@@ -1153,10 +959,10 @@ class LogCollector:
                     grouped_metrics[key] = []
                 grouped_metrics[key].append(metric)
             
-            logger.info(f"成功获取任务 {task_id} 的FIO日志指标数据，共 {len(all_metrics)} 条记录，分组后: {len(grouped_metrics)} 组")
+            logger.info(f"成功从数据库获取任务 {task_id} 的实时FIO日志指标数据，共 {len(all_metrics)} 条记录，分组后: {len(grouped_metrics)} 组")
             return all_metrics
         except Exception as e:
-            logger.error(f"获取FIO日志指标数据失败: {e}")
+            logger.error(f"获取实时FIO日志指标数据失败: {e}")
             return []
     
     def get_iostat_metrics(self, log_id, start_time=None, end_time=None):
@@ -1228,6 +1034,7 @@ class LogCollector:
                             'write_kbps': write_metrics.get('bw', 0),
                             'await_time': read_metrics.get('lat', 0),
                             'lat_p99': (read_metrics.get('lat_p99', 0) + write_metrics.get('lat_p99', 0)) / 2,
+                            'lat_p9999': (read_metrics.get('lat_p9999', 0) + write_metrics.get('lat_p9999', 0)) / 2,
                             'lat_max': max(read_metrics.get('lat_max', 0), write_metrics.get('lat_max', 0)),
                             'svctm': 0,
                             'util': 0
@@ -1240,12 +1047,14 @@ class LogCollector:
                         write_metrics = global_metrics.get('write', {})
                         jobs = fio_results.get('jobs', [])
                         
-                        # 从jobs中获取lat_p99和lat_max值
+                        # 从jobs中获取lat_p99、lat_p9999和lat_max值
                         lat_p99 = 0
+                        lat_p9999 = 0
                         lat_max = 0
                         if jobs:
                             first_job = jobs[0]
                             lat_p99 = (first_job.get('lat_p99', 0) + first_job.get('lat_p99', 0)) / 2
+                            lat_p9999 = (first_job.get('lat_p9999', 0) + first_job.get('lat_p9999', 0)) / 2
                             lat_max = first_job.get('lat_max', 0)
                         
                         # 转换为统一格式
@@ -1260,6 +1069,7 @@ class LogCollector:
                             'write_kbps': write_metrics.get('bw', '0'),
                             'await_time': read_metrics.get('lat', '0') if read_metrics.get('lat') else write_metrics.get('lat', '0'),
                             'lat_p99': lat_p99,
+                            'lat_p9999': lat_p9999,
                             'lat_max': lat_max,
                             'svctm': 0,
                             'util': 0
