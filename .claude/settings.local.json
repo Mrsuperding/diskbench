@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python application.py)",
+      "Bash(npm run:*)",
+      "Bash(netstat -ano)",
+      "Bash(xargs -I {} taskkill /F /PID {})",
+      "Bash(powershell -Command \"Stop-Process -Id 32200 -Force\")",
+      "Bash(curl -s http://localhost:5003/health)",
+      "Bash(curl -s http://localhost:5003/api/io-cases)",
+      "Bash(python -m json.tool)",
+      "Bash(curl -s http://localhost:5003/api/nodes)",
+      "Bash(curl:*)",
+      "Bash(python:*)",
+      "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmcmVzaCI6ZmFsc2UsImlhdCI6MTc3NDE5MzA1OCwianRpIjoiYjE4ZDY4ODctODc4Ni00OTFkLWI3YmMtMTI1M2M2MGY2NzJiIiwidHlwZSI6ImFjY2VzcyIsInN1YiI6OSwibmJmIjoxNzc0MTkzMDU4LCJleHAiOjE3NzQyNzk0NTh9.cZbjBmMV_NTsU9s6jSYaOuUxzdQ7ofAr4h_jL_Ko1Hs\")",
+      "Bash(pkill:*)",
+      "Bash(taskkill //F //IM python.exe)",
+      "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmcmVzaCI6ZmFsc2UsImlhdCI6MTc3NDE5MzA1OCwianRpIjoiYjE4ZDY4ODctODc4Ni00OTFkLWI3YmMtMTI1M2M2MGY2NzJiIiwidHlwZSI6ImFjY2VzcyIsInN1YiI6OSwibmJmIjoxNzR0MTkzMDU4LCJleHAiOjE3NzQyNzk0NTh9.cZbjBmMV_NTsU9s6jSYaOuUxzdQ7ofAr4h_jL_Ko1Hs\")",
+      "Bash(timeout 10 bash -c \"echo ''exit'' | nc -w 5 115.190.198.168 22 2>&1\")",
+      "Bash(taskkill //F //FI \"WINDOWTITLE eq npm*\")",
+      "Bash(taskkill:*)",
+      "Bash(cp src/views/IOJitterChart.vue src/views/IOJitterChart.vue.bak)",
+      "Bash(sed -i '705,925d' src/views/IOJitterChart.vue)",
+      "Bash(cd:*)",
+      "Bash(ls -la \"D:/delvelop_project/ai_project/diskbench_pro2/diskbench_pro2/frontend/src/views/IOJitterChart.vue\"*)",
+      "Bash(node -e \"const fs = require\\(''fs''\\); const content = fs.readFileSync\\(''src/views/IOJitterChart.vue'', ''utf8''\\); console.log\\(''File can be parsed''\\);\")",
+      "Bash(grep -n \"write_lat_log\\\\|lat_log\" app/utils/*.py)"
+    ]
+  }
+}
