@@ -76,8 +76,13 @@ def get_task_io_test_cases(task_id, db):
 def send_task_log(task_id, message, level='INFO', context=None):
     """发送任务日志"""
     try:
-        from app.utils.log_collector import log_collector
-        log_collector.emit_task_log(task_id, message, level, context)
+        # LogCollector没有emit_task_log方法,暂时使用logger记录
+        if level == 'ERROR':
+            logger.error(f"Task {task_id}: {message}")
+        elif level == 'WARNING':
+            logger.warning(f"Task {task_id}: {message}")
+        else:
+            logger.info(f"Task {task_id}: {message}")
     except Exception as e:
         logger.error(f"发送任务日志失败: {e}")
 
@@ -209,9 +214,9 @@ def run_task_execution(task_id, execution_id, app):
 def run_task(task_id):
     """执行任务"""
     try:
-        from app import create_app
-        app = create_app()
-        
+        from flask import current_app
+        app = current_app._get_current_object()
+
         # 获取任务信息
         task = db.session.query(TestTask).filter_by(id=task_id).first()
         if not task:
@@ -220,7 +225,7 @@ def run_task(task_id):
                 'message': '任务不存在',
                 'data': None
             }), 404
-        
+
         # 创建任务执行记录
         execution = TaskExecution(
             test_task_id=task_id,
@@ -229,7 +234,7 @@ def run_task(task_id):
         )
         db.session.add(execution)
         db.session.commit()
-        
+
         # 启动线程执行任务
         thread = threading.Thread(
             target=run_task_execution,
@@ -237,7 +242,7 @@ def run_task(task_id):
         )
         thread.daemon = True
         thread.start()
-        
+
         return jsonify({
             'success': True,
             'message': '任务开始执行',
@@ -246,7 +251,7 @@ def run_task(task_id):
                 'execution_id': execution.id
             }
         }), 200
-    
+
     except Exception as e:
         logger.error(f"执行任务失败: {e}")
         return jsonify({
@@ -301,13 +306,15 @@ def get_task(task_id):
                     'id': node.id,
                     'name': node.name,
                     'ip_address': node.ip_address,
-                    'status': node.status
+                    'status': node.status,
+                    'io_partitions': node.io_partitions if hasattr(node, 'io_partitions') else []
                 } for node in nodes],
                 'io_test_cases': [{
                     'id': case.id,
                     'name': case.name,
                     'description': case.description,
-                    'io_model': case.io_model
+                    'tool': case.tool,
+                    'parameters': case.parameters
                 } for case in io_test_cases]
             }
         }), 200
@@ -326,11 +333,17 @@ def get_tasks():
     """获取任务列表"""
     try:
         tasks = db.session.query(TestTask).order_by(TestTask.created_at.desc()).all()
-        
-        return jsonify({
-            'success': True,
-            'message': '获取任务列表成功',
-            'data': [{
+
+        # 为每个任务获取关联的节点和IO测试用例
+        tasks_data = []
+        for task in tasks:
+            # 获取节点列表
+            nodes = task.nodes if hasattr(task, 'nodes') else []
+
+            # 获取IO测试用例列表
+            io_test_cases = get_task_io_test_cases(task.id, db)
+
+            tasks_data.append({
                 'id': task.id,
                 'name': task.name,
                 'description': task.description,
@@ -338,10 +351,26 @@ def get_tasks():
                 'execution_mode': task.execution_mode,
                 'created_at': task.created_at,
                 'updated_at': task.updated_at,
-                'completed_at': task.completed_at
-            } for task in tasks]
+                'completed_at': task.completed_at,
+                'nodes': [{
+                    'id': node.id,
+                    'name': node.name,
+                    'ip_address': node.ip_address,
+                    'status': node.status,
+                    'io_partitions': node.io_partitions if hasattr(node, 'io_partitions') else []
+                } for node in nodes],
+                'io_test_cases': [{
+                    'id': case.id,
+                    'name': case.name
+                } for case in io_test_cases]
+            })
+
+        return jsonify({
+            'success': True,
+            'message': '获取任务列表成功',
+            'data': tasks_data
         }), 200
-    
+
     except Exception as e:
         logger.error(f"获取任务列表失败: {e}")
         return jsonify({
@@ -449,14 +478,24 @@ def update_task(task_id):
         
         # 更新关联IO测试用例
         if 'io_test_case_ids' in data:
-            # 清空现有测试用例关联
-            task.io_test_cases.clear()
+            # 删除现有关联
+            from app.models import task_case_association
+            db.session.execute(
+                task_case_association.delete().where(
+                    task_case_association.c.test_task_id == task.id
+                )
+            )
             # 添加新关联
             from app.models.io_test_case import IOTestCase
             for io_test_case_id in data['io_test_case_ids']:
                 io_test_case = IOTestCase.query.get(io_test_case_id)
                 if io_test_case:
-                    task.io_test_cases.append(io_test_case)
+                    db.session.execute(
+                        task_case_association.insert().values(
+                            test_task_id=task.id,
+                            io_test_case_id=io_test_case_id
+                        )
+                    )
         
         task.updated_at = datetime.utcnow()
         db.session.commit()
@@ -495,8 +534,52 @@ def delete_task(task_id):
                 'data': None
             }), 404
         
+        # 获取任务相关的测试日志ID
+        from app.models import TestLog
+        test_logs = db.session.query(TestLog).filter_by(test_task_id=task_id).all()
+        test_log_ids = [log.id for log in test_logs]
+        
+        # 删除关联的iostat_metrics记录
+        if test_log_ids:
+            from app.models import IOStatMetric
+            db.session.query(IOStatMetric).filter(IOStatMetric.test_log_id.in_(test_log_ids)).delete(synchronize_session=False)
+        
+        # 删除关联的测试结果
+        from app.models import TestResult
+        db.session.query(TestResult).filter_by(test_task_id=task_id).delete()
+        
+        # 删除关联的测试日志
+        db.session.query(TestLog).filter_by(test_task_id=task_id).delete()
+        
+        # 获取任务相关的执行记录ID
+        executions = db.session.query(TaskExecution).filter_by(test_task_id=task_id).all()
+        execution_ids = [exec.id for exec in executions]
+        
+        # 删除关联的io_performance_data记录
+        if execution_ids:
+            from app.models import IOPerformanceData
+            db.session.query(IOPerformanceData).filter(IOPerformanceData.task_execution_id.in_(execution_ids)).delete(synchronize_session=False)
+        
         # 删除关联的执行记录
         db.session.query(TaskExecution).filter_by(test_task_id=task_id).delete()
+        
+        # 清空关联的节点和测试用例（通过关联表）
+        try:
+            # 重新加载任务以确保关联正确
+            db.session.refresh(task)
+            # 清空节点关联
+            if hasattr(task, 'nodes'):
+                nodes_list = list(task.nodes)
+                for node in nodes_list:
+                    task.nodes.remove(node)
+            # 清空测试用例关联
+            if hasattr(task, 'io_test_cases'):
+                test_cases_list = list(task.io_test_cases)
+                for test_case in test_cases_list:
+                    task.io_test_cases.remove(test_case)
+        except Exception as e:
+            logger.error(f"清空关联数据失败: {e}")
+            # 继续执行，不中断删除流程
         
         # 删除任务
         db.session.delete(task)
@@ -507,7 +590,6 @@ def delete_task(task_id):
             'message': '删除任务成功',
             'data': None
         }), 200
-    
     except Exception as e:
         logger.error(f"删除任务失败: {e}")
         return jsonify({
@@ -562,5 +644,104 @@ def get_task_execution_logs(task_id, execution_id):
         return jsonify({
             'success': False,
             'message': f'获取任务执行日志失败: {str(e)}',
+            'data': None
+        }), 500
+
+
+@tasks_bp.route('/<int:task_id>/clone', methods=['POST'])
+def clone_task(task_id):
+    """克隆任务"""
+    try:
+        # 获取原任务
+        original_task = db.session.query(TestTask).filter_by(id=task_id).first()
+        if not original_task:
+            return jsonify({
+                'success': False,
+                'message': '任务不存在',
+                'data': None
+            }), 404
+        
+        # 创建新任务，复制基本信息
+        new_task = TestTask(
+            name=f"{original_task.name} (克隆)",
+            description=original_task.description,
+            execution_mode=original_task.execution_mode,
+            priority=original_task.priority
+        )
+        # 手动设置 created_by
+        new_task.created_by = 1
+        db.session.add(new_task)
+        db.session.commit()
+        
+        # 复制关联节点
+        for node in original_task.nodes:
+            new_task.nodes.append(node)
+        
+        # 复制关联IO测试用例
+        for io_test_case in original_task.io_test_cases:
+            new_task.io_test_cases.append(io_test_case)
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': '克隆任务成功',
+            'data': {
+                'id': new_task.id,
+                'name': new_task.name,
+                'description': new_task.description,
+                'status': new_task.status,
+                'execution_mode': new_task.execution_mode,
+                'created_at': new_task.created_at
+            }
+        }), 201
+    except Exception as e:
+        logger.error(f"克隆任务失败: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'克隆任务失败: {str(e)}',
+            'data': None
+        }), 500
+
+
+@tasks_bp.route('/<int:task_id>/results', methods=['GET'])
+def get_task_results(task_id):
+    """获取任务结果"""
+    try:
+        # 验证任务存在
+        task = db.session.query(TestTask).filter_by(id=task_id).first()
+        if not task:
+            return jsonify({
+                'success': False,
+                'message': '任务不存在',
+                'data': None
+            }), 404
+        
+        # 获取任务相关的测试结果
+        from app.models import TestResult
+        results = db.session.query(TestResult).filter_by(test_task_id=task_id).all()
+        
+        return jsonify({
+            'success': True,
+            'message': '获取任务结果成功',
+            'data': [{
+                'id': result.id,
+                'test_task_id': result.test_task_id,
+                'node_id': result.node_id,
+                'io_test_case_id': result.io_test_case_id,
+                'task_execution_id': result.task_execution_id,
+                'status': result.status,
+                'tool': result.tool,
+                'command': result.command,
+                'raw_output': result.raw_output,
+                'parsed_results': result.parsed_results,
+                'created_at': result.created_at.isoformat() if result.created_at else None
+            } for result in results]
+        }), 200
+    except Exception as e:
+        logger.error(f"获取任务结果失败: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'获取任务结果失败: {str(e)}',
             'data': None
         }), 500

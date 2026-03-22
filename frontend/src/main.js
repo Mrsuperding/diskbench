@@ -43,10 +43,13 @@ if (window.ResizeObserver) {
 }
 
 // 挂载Vue应用并隐藏加载动画
-app.mount("#app").$nextTick(() => {
+app.mount("#app");
+
+// 延迟隐藏加载动画，避免干扰Element Plus组件初始化
+setTimeout(() => {
   // 移除加载动画
   const loadingElement = document.getElementById("app-loading");
   if (loadingElement) {
     loadingElement.style.display = "none";
   }
-});
+}, 1000);

@@ -12,23 +12,29 @@
 
       <div class="chart-controls">
         <el-select
-          v-model="selectedNode"
-          placeholder="选择节点"
-          style="width: 200px; margin-right: 10px"
+          v-model="selectedNodes"
+          placeholder="选择节点（可多选）"
+          multiple
+          collapse-tags
+          collapse-tags-tooltip
+          style="width: 250px; margin-right: 10px"
           @change="loadIOJitterData"
         >
           <el-option
             v-for="node in taskNodes"
             :key="node.id"
-            :label="node.name"
+            :label="`${node.name} (${node.ip_address})`"
             :value="node.id"
           ></el-option>
         </el-select>
 
         <el-select
-          v-model="selectedDevice"
-          placeholder="选择设备"
-          style="width: 200px; margin-right: 10px"
+          v-model="selectedDevices"
+          placeholder="选择设备（可多选）"
+          multiple
+          collapse-tags
+          collapse-tags-tooltip
+          style="width: 250px; margin-right: 10px"
           @change="updateIOJitterChart"
         >
           <el-option
@@ -38,6 +44,15 @@
             :value="device"
           ></el-option>
         </el-select>
+
+        <el-tooltip
+          content="IOPS和吞吐量会叠加，延迟/使用率/服务时间取最大值"
+          placement="top"
+        >
+          <el-icon style="color: #909399; cursor: help; margin-right: 10px">
+            <QuestionFilled />
+          </el-icon>
+        </el-tooltip>
 
         <el-select
           v-model="selectedYAxisMetrics"
@@ -163,7 +178,8 @@ import { ref, onMounted, onUnmounted, reactive } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import * as echarts from "echarts";
 import { io } from "socket.io-client";
-import { getTask } from "@/api/tasks";
+import { QuestionFilled } from "@element-plus/icons-vue";
+import tasksApi from "@/api/tasks";
 import {
   getTaskLogs,
   getIOStatMetrics,
@@ -181,9 +197,9 @@ const ioJitterChartRef = ref(null);
 let ioJitterChart = null;
 const selectedYAxisMetrics = ref(["读IOPS", "写IOPS", "总IOPS"]);
 
-// 选择控件
-const selectedNode = ref("");
-const selectedDevice = ref("");
+// 选择控件 - 改为多选
+const selectedNodes = ref([]);
+const selectedDevices = ref([]);
 
 // 数据相关
 const taskNodes = ref([]);
@@ -236,7 +252,7 @@ const goBack = () => {
 const initWebSocket = () => {
   console.log("初始化WebSocket连接，任务ID:", taskId.value);
   // 创建WebSocket连接
-  socket.value = io("http://localhost:5002", {
+  socket.value = io("http://localhost:5003", {
     transports: ["websocket"],
     reconnection: true,
     reconnectionAttempts: 5,
@@ -388,11 +404,10 @@ const handleResize = () => {
 const updateIOJitterChart = async () => {
   if (!ioJitterChart) return;
 
-  // 获取当前选中设备的数据
-  const deviceData =
-    selectedDevice.value && iostatMetrics.devices[selectedDevice.value]
-      ? iostatMetrics.devices[selectedDevice.value]
-      : Object.values(iostatMetrics.devices)[0] || { timestamps: [] };
+  // 更新聚合指标
+  if (selectedDevices.value.length > 0) {
+    updateAggregatedMetrics();
+  }
 
   // 如果切换了指标，更新抖动统计信息
   if (selectedYAxisMetrics.value.length > 0 && currentLogId.value) {
@@ -420,8 +435,8 @@ const updateIOJitterChart = async () => {
     return colorMap[metric] || "#888";
   };
 
-  // 准备时间数据
-  const timeData = deviceData.timestamps;
+  // 使用聚合后的数据
+  const timeData = iostatMetrics.timestamps;
 
   // 如果没有iostat数据，显示空图表
   if (timeData.length === 0) {
@@ -463,12 +478,12 @@ const updateIOJitterChart = async () => {
     return;
   }
 
-  // 准备所有可能的系列数据
+  // 准备所有可能的系列数据（使用聚合后的数据）
   const allSeries = {
     读IOPS: {
       name: "读IOPS",
       type: "line",
-      data: deviceData.readIOPS || [],
+      data: iostatMetrics.readIOPS || [],
       smooth: true,
       lineStyle: { color: getMetricColor("读IOPS") },
       areaStyle: {
@@ -488,7 +503,7 @@ const updateIOJitterChart = async () => {
     写IOPS: {
       name: "写IOPS",
       type: "line",
-      data: deviceData.writeIOPS || [],
+      data: iostatMetrics.writeIOPS || [],
       smooth: true,
       lineStyle: { color: getMetricColor("写IOPS") },
       areaStyle: {
@@ -508,7 +523,7 @@ const updateIOJitterChart = async () => {
     总IOPS: {
       name: "总IOPS",
       type: "line",
-      data: deviceData.totalIOPS || [],
+      data: iostatMetrics.totalIOPS || [],
       smooth: true,
       lineStyle: { color: getMetricColor("总IOPS") },
       areaStyle: {
@@ -528,7 +543,7 @@ const updateIOJitterChart = async () => {
     读延迟: {
       name: "读延迟",
       type: "line",
-      data: deviceData.readLatency || [],
+      data: iostatMetrics.readLatency || [],
       smooth: true,
       lineStyle: { color: getMetricColor("读延迟") },
       areaStyle: {
@@ -548,7 +563,7 @@ const updateIOJitterChart = async () => {
     写延迟: {
       name: "写延迟",
       type: "line",
-      data: deviceData.writeLatency || [],
+      data: iostatMetrics.writeLatency || [],
       smooth: true,
       lineStyle: { color: getMetricColor("写延迟") },
       areaStyle: {
@@ -568,7 +583,7 @@ const updateIOJitterChart = async () => {
     磁盘使用率: {
       name: "磁盘使用率",
       type: "line",
-      data: deviceData.diskUtilization || [],
+      data: iostatMetrics.diskUtilization || [],
       smooth: true,
       lineStyle: { color: getMetricColor("磁盘使用率") },
       areaStyle: {
@@ -588,7 +603,7 @@ const updateIOJitterChart = async () => {
     读吞吐量: {
       name: "读吞吐量",
       type: "line",
-      data: deviceData.readThroughput || [],
+      data: iostatMetrics.readThroughput || [],
       smooth: true,
       lineStyle: { color: getMetricColor("读吞吐量") },
       areaStyle: {
@@ -608,7 +623,7 @@ const updateIOJitterChart = async () => {
     写吞吐量: {
       name: "写吞吐量",
       type: "line",
-      data: deviceData.writeThroughput || [],
+      data: iostatMetrics.writeThroughput || [],
       smooth: true,
       lineStyle: { color: getMetricColor("写吞吐量") },
       areaStyle: {
@@ -628,7 +643,7 @@ const updateIOJitterChart = async () => {
     总吞吐量: {
       name: "总吞吐量",
       type: "line",
-      data: deviceData.totalThroughput || [],
+      data: iostatMetrics.totalThroughput || [],
       smooth: true,
       lineStyle: { color: getMetricColor("总吞吐量") },
       areaStyle: {
@@ -648,7 +663,7 @@ const updateIOJitterChart = async () => {
     队列长度: {
       name: "队列长度",
       type: "line",
-      data: deviceData.queueLength || [],
+      data: iostatMetrics.queueLength || [],
       smooth: true,
       lineStyle: { color: getMetricColor("队列长度") },
       areaStyle: {
@@ -668,7 +683,7 @@ const updateIOJitterChart = async () => {
     服务时间: {
       name: "服务时间",
       type: "line",
-      data: deviceData.serviceTime || [],
+      data: iostatMetrics.serviceTime || [],
       smooth: true,
       lineStyle: { color: getMetricColor("服务时间") },
       areaStyle: {
@@ -727,11 +742,12 @@ const getYAxisName = (metric) => {
 // 加载任务信息
 const loadTaskInfo = async () => {
   try {
-    const response = await getTask(taskId.value);
+    const response = await tasksApi.getTask(taskId.value);
     if (response && response.data) {
       taskNodes.value = response.data.nodes;
       if (taskNodes.value.length > 0) {
-        selectedNode.value = taskNodes.value[0].id;
+        // 默认选择所有节点
+        selectedNodes.value = taskNodes.value.map((node) => node.id);
         loadIOJitterData();
       }
     }
@@ -831,39 +847,72 @@ const loadCurrentMetricJitter = async (logId, metricType) => {
 
 // 加载IO抖动数据
 const loadIOJitterData = async () => {
-  if (!selectedNode.value) return;
+  if (selectedNodes.value.length === 0) return;
 
   try {
     // 重置数据
     resetIOJitterData();
 
-    // 获取任务的测试日志
-    const logsResponse = await getTaskLogs(taskId.value, {
-      node_id: selectedNode.value,
-    });
-    if (logsResponse && logsResponse.data) {
-      const iostatLogs = logsResponse.data.filter(
-        (log) => log.log_type === "iostat",
-      );
+    // 收集所有节点的数据
+    const allMetricsData = [];
+    const allDevices = new Set();
+    let lastLogId = null;
 
-      if (iostatLogs.length > 0) {
-        // 获取iostat日志的指标数据
-        const logId = iostatLogs[0].id;
-        currentLogId.value = logId;
+    // 遍历所有选中的节点
+    for (const nodeId of selectedNodes.value) {
+      // 获取任务的测试日志
+      const logsResponse = await getTaskLogs(taskId.value, {
+        node_id: nodeId,
+      });
 
-        // 获取IOSTAT指标数据
-        const metricsResponse = await getIOStatMetrics(logId);
-        if (metricsResponse && metricsResponse.data) {
-          processIOJitterMetrics(metricsResponse.data);
-          updateIOJitterChart();
+      if (logsResponse && logsResponse.data) {
+        const iostatLogs = logsResponse.data.filter(
+          (log) => log.log_type === "iostat",
+        );
+
+        if (iostatLogs.length > 0) {
+          const logId = iostatLogs[0].id;
+          lastLogId = logId; // 保存最后一个logId用于加载抖动数据
+
+          // 获取IOSTAT指标数据
+          const metricsResponse = await getIOStatMetrics(logId);
+          if (metricsResponse && metricsResponse.data) {
+            // 为每条metric添加node_id标记
+            const metricsWithNode = metricsResponse.data.map((metric) => ({
+              ...metric,
+              node_id: nodeId,
+            }));
+            allMetricsData.push(...metricsWithNode);
+
+            // 收集所有设备
+            metricsWithNode.forEach((metric) => {
+              if (metric.device) allDevices.add(metric.device);
+            });
+          }
         }
+      }
+    }
 
-        // 获取抖动数据
-        await loadJitterData(logId);
+    // 更新可用设备列表
+    availableDevices.value = Array.from(allDevices);
 
-        // 获取当前选中指标的抖动数据
+    // 默认选择所有设备
+    if (selectedDevices.value.length === 0 && availableDevices.value.length > 0) {
+      selectedDevices.value = [...availableDevices.value];
+    }
+
+    // 处理合并后的数据
+    if (allMetricsData.length > 0) {
+      processIOJitterMetrics(allMetricsData);
+      updateIOJitterChart();
+
+      // 使用最后一个logId加载抖动数据
+      if (lastLogId) {
+        currentLogId.value = lastLogId;
+        await loadJitterData(lastLogId);
+
         if (selectedYAxisMetrics.value.length > 0) {
-          await loadCurrentMetricJitter(logId, selectedYAxisMetrics.value[0]);
+          await loadCurrentMetricJitter(lastLogId, selectedYAxisMetrics.value[0]);
         }
       }
     }
@@ -874,133 +923,212 @@ const loadIOJitterData = async () => {
 
 // 处理IO抖动指标数据
 const processIOJitterMetrics = (metrics) => {
+  console.log("=== processIOJitterMetrics 开始 ===");
+  console.log("接收到的metrics数量:", metrics.length);
+  if (metrics.length > 0) {
+    console.log("第一条metric示例:", JSON.stringify(metrics[0], null, 2));
+    console.log("关键字段检查:", {
+      await_time: metrics[0].await_time,
+      svctm: metrics[0].svctm,
+      util: metrics[0].util
+    });
+  }
+
   // 按时间排序
   metrics.sort(
     (a, b) => new Date(a.collection_time) - new Date(b.collection_time),
   );
 
-  // 设备集合
-  const devices = new Set();
-
-  // 按设备分组数据
-  const deviceData = {};
-
-  // 如果是单个指标对象，直接添加到现有数据中
-  if (metrics.length === 1 && typeof metrics[0] === "object") {
-    const metric = metrics[0];
+  // 按时间戳和设备分组 (时间戳 -> 设备 -> [metrics])
+  const timeDeviceMap = {};
+  metrics.forEach((metric) => {
     const timestamp = new Date(metric.collection_time).toLocaleTimeString();
-    devices.add(metric.device);
-
-    if (!iostatMetrics.devices[metric.device]) {
-      iostatMetrics.devices[metric.device] = {
-        timestamps: [],
-        readIOPS: [],
-        writeIOPS: [],
-        totalIOPS: [],
-        readLatency: [],
-        writeLatency: [],
-        diskUtilization: [],
-        readThroughput: [],
-        writeThroughput: [],
-        totalThroughput: [],
-        queueLength: [],
-        serviceTime: [],
-      };
+    if (!timeDeviceMap[timestamp]) {
+      timeDeviceMap[timestamp] = {};
     }
-
-    // 限制数据点数量，避免图表过于拥挤
-    const maxDataPoints = 100;
-    if (
-      iostatMetrics.devices[metric.device].timestamps.length >= maxDataPoints
-    ) {
-      iostatMetrics.devices[metric.device].timestamps.shift();
-      iostatMetrics.devices[metric.device].readIOPS.shift();
-      iostatMetrics.devices[metric.device].writeIOPS.shift();
-      iostatMetrics.devices[metric.device].totalIOPS.shift();
-      iostatMetrics.devices[metric.device].readLatency.shift();
-      iostatMetrics.devices[metric.device].writeLatency.shift();
-      iostatMetrics.devices[metric.device].diskUtilization.shift();
-      iostatMetrics.devices[metric.device].readThroughput.shift();
-      iostatMetrics.devices[metric.device].writeThroughput.shift();
-      iostatMetrics.devices[metric.device].totalThroughput.shift();
-      iostatMetrics.devices[metric.device].queueLength.shift();
-      iostatMetrics.devices[metric.device].serviceTime.shift();
+    if (!timeDeviceMap[timestamp][metric.device]) {
+      timeDeviceMap[timestamp][metric.device] = [];
     }
+    timeDeviceMap[timestamp][metric.device].push(metric);
+  });
 
-    iostatMetrics.devices[metric.device].timestamps.push(timestamp);
-    iostatMetrics.devices[metric.device].readIOPS.push(metric.read_iops);
-    iostatMetrics.devices[metric.device].writeIOPS.push(metric.write_iops);
-    iostatMetrics.devices[metric.device].totalIOPS.push(
-      metric.read_iops + metric.write_iops,
-    );
-    iostatMetrics.devices[metric.device].readLatency.push(metric.await_time);
-    iostatMetrics.devices[metric.device].writeLatency.push(metric.await_time);
-    iostatMetrics.devices[metric.device].diskUtilization.push(metric.util);
-    iostatMetrics.devices[metric.device].readThroughput.push(metric.read_kbps);
-    iostatMetrics.devices[metric.device].writeThroughput.push(
-      metric.write_kbps,
-    );
-    iostatMetrics.devices[metric.device].totalThroughput.push(
-      metric.read_kbps + metric.write_kbps,
-    );
-    iostatMetrics.devices[metric.device].queueLength.push(
-      metric.await_time / metric.svctm,
-    );
-    iostatMetrics.devices[metric.device].serviceTime.push(metric.svctm);
-  } else {
-    // 处理完整的指标数组
-    metrics.forEach((metric) => {
-      const timestamp = new Date(metric.collection_time).toLocaleTimeString();
-      devices.add(metric.device);
+  // 获取所有时间戳和设备
+  const timestamps = Object.keys(timeDeviceMap).sort();
+  const devices = new Set();
+  metrics.forEach((m) => devices.add(m.device));
+  availableDevices.value = Array.from(devices);
 
-      if (!deviceData[metric.device]) {
-        deviceData[metric.device] = {
-          timestamps: [],
-          readIOPS: [],
-          writeIOPS: [],
-          totalIOPS: [],
-          readLatency: [],
-          writeLatency: [],
-          diskUtilization: [],
-          readThroughput: [],
-          writeThroughput: [],
-          totalThroughput: [],
-          queueLength: [],
-          serviceTime: [],
-        };
+  // 按设备处理数据（先在节点层面聚合）
+  const deviceData = {};
+  Array.from(devices).forEach((device) => {
+    deviceData[device] = {
+      timestamps: [],
+      readIOPS: [],
+      writeIOPS: [],
+      totalIOPS: [],
+      readLatency: [],
+      writeLatency: [],
+      diskUtilization: [],
+      readThroughput: [],
+      writeThroughput: [],
+      totalThroughput: [],
+      queueLength: [],
+      serviceTime: [],
+    };
+
+    timestamps.forEach((timestamp) => {
+      const metricsAtTime = timeDeviceMap[timestamp][device] || [];
+      if (metricsAtTime.length === 0) return;
+
+      // 可叠加指标：求和（来自不同节点的同设备IOPS和吞吐量）
+      const readIOPS = metricsAtTime.reduce((sum, m) => sum + (m.read_iops || 0), 0);
+      const writeIOPS = metricsAtTime.reduce((sum, m) => sum + (m.write_iops || 0), 0);
+      const readKbps = metricsAtTime.reduce((sum, m) => sum + (m.read_kbps || 0), 0);
+      const writeKbps = metricsAtTime.reduce((sum, m) => sum + (m.write_kbps || 0), 0);
+
+      // 不可叠加指标：取最大值（延迟、利用率、服务时间）
+      const awaitTime = Math.max(...metricsAtTime.map((m) => m.await_time || 0));
+      const util = Math.max(...metricsAtTime.map((m) => m.util || 0));
+      const svctm = Math.max(...metricsAtTime.map((m) => m.svctm || 0));
+
+      if (timestamp.includes(":00") && timestamp.split(":")[0] === new Date().getHours().toString()) {
+        console.log(`时间点 ${timestamp} 的聚合值:`, {
+          awaitTime,
+          util,
+          svctm,
+          metricsCount: metricsAtTime.length
+        });
       }
 
-      deviceData[metric.device].timestamps.push(timestamp);
-      deviceData[metric.device].readIOPS.push(metric.read_iops);
-      deviceData[metric.device].writeIOPS.push(metric.write_iops);
-      deviceData[metric.device].totalIOPS.push(
-        metric.read_iops + metric.write_iops,
-      );
-      deviceData[metric.device].readLatency.push(metric.await_time);
-      deviceData[metric.device].writeLatency.push(metric.await_time);
-      deviceData[metric.device].diskUtilization.push(metric.util);
-      deviceData[metric.device].readThroughput.push(metric.read_kbps);
-      deviceData[metric.device].writeThroughput.push(metric.write_kbps);
-      deviceData[metric.device].totalThroughput.push(
-        metric.read_kbps + metric.write_kbps,
-      );
-      deviceData[metric.device].queueLength.push(
-        metric.await_time / metric.svctm,
-      );
-      deviceData[metric.device].serviceTime.push(metric.svctm);
+      deviceData[device].timestamps.push(timestamp);
+      deviceData[device].readIOPS.push(readIOPS);
+      deviceData[device].writeIOPS.push(writeIOPS);
+      deviceData[device].totalIOPS.push(readIOPS + writeIOPS);
+      deviceData[device].readLatency.push(awaitTime);
+      deviceData[device].writeLatency.push(awaitTime);
+      deviceData[device].diskUtilization.push(util);
+      deviceData[device].readThroughput.push(readKbps);
+      deviceData[device].writeThroughput.push(writeKbps);
+      deviceData[device].totalThroughput.push(readKbps + writeKbps);
+      deviceData[device].queueLength.push(svctm > 0 ? awaitTime / svctm : 0);
+      deviceData[device].serviceTime.push(svctm);
+    });
+  });
+
+  // 更新iostatMetrics
+  iostatMetrics.devices = deviceData;
+
+  // 如果已选择设备，更新聚合数据
+  if (selectedDevices.value.length > 0) {
+    updateAggregatedMetrics();
+  } else if (Object.keys(deviceData).length > 0) {
+    // 否则使用第一个设备的数据
+    const firstDevice = Object.keys(deviceData)[0];
+    Object.assign(iostatMetrics, deviceData[firstDevice]);
+  }
+};
+
+// 更新聚合指标（跨多个设备聚合）
+const updateAggregatedMetrics = () => {
+  if (selectedDevices.value.length === 0) return;
+
+  console.log("=== updateAggregatedMetrics 开始 ===");
+  console.log("选中的设备:", selectedDevices.value);
+
+  // 获取选中设备的数据
+  const selectedDeviceData = selectedDevices.value
+    .map((device) => iostatMetrics.devices[device])
+    .filter((data) => data && data.timestamps.length > 0);
+
+  console.log("找到的设备数据数量:", selectedDeviceData.length);
+  if (selectedDeviceData.length > 0) {
+    console.log("第一个设备的时间戳样本:", selectedDeviceData[0].timestamps.slice(0, 3));
+    console.log("第一个设备的readIOPS样本:", selectedDeviceData[0].readIOPS.slice(0, 3));
+  }
+
+  if (selectedDeviceData.length === 0) {
+    console.warn("没有找到任何设备数据！");
+    return;
+  }
+
+  // 获取所有时间戳的并集
+  const allTimestamps = new Set();
+  selectedDeviceData.forEach((deviceData) => {
+    deviceData.timestamps.forEach((ts) => allTimestamps.add(ts));
+  });
+
+  const sortedTimestamps = Array.from(allTimestamps).sort();
+
+  // 初始化聚合数据
+  const aggregated = {
+    timestamps: sortedTimestamps,
+    readIOPS: [],
+    writeIOPS: [],
+    totalIOPS: [],
+    readLatency: [],
+    writeLatency: [],
+    diskUtilization: [],
+    readThroughput: [],
+    writeThroughput: [],
+    totalThroughput: [],
+    queueLength: [],
+    serviceTime: [],
+  };
+
+  // 对每个时间戳进行聚合
+  sortedTimestamps.forEach((timestamp) => {
+    let readIOPS = 0,
+      writeIOPS = 0,
+      readKbps = 0,
+      writeKbps = 0;
+    let maxAwaitTime = 0,
+      maxUtil = 0,
+      maxSvctm = 0,
+      maxQueueLength = 0;
+
+    selectedDeviceData.forEach((deviceData) => {
+      const idx = deviceData.timestamps.indexOf(timestamp);
+      if (idx !== -1) {
+        // 可叠加指标：求和
+        readIOPS += deviceData.readIOPS[idx] || 0;
+        writeIOPS += deviceData.writeIOPS[idx] || 0;
+        readKbps += deviceData.readThroughput[idx] || 0;
+        writeKbps += deviceData.writeThroughput[idx] || 0;
+
+        // 不可叠加指标：取最大值
+        maxAwaitTime = Math.max(maxAwaitTime, deviceData.readLatency[idx] || 0);
+        maxUtil = Math.max(maxUtil, deviceData.diskUtilization[idx] || 0);
+        maxSvctm = Math.max(maxSvctm, deviceData.serviceTime[idx] || 0);
+        maxQueueLength = Math.max(
+          maxQueueLength,
+          deviceData.queueLength[idx] || 0,
+        );
+      }
     });
 
-    // 更新iostatMetrics
-    iostatMetrics.devices = deviceData;
+    aggregated.readIOPS.push(readIOPS);
+    aggregated.writeIOPS.push(writeIOPS);
+    aggregated.totalIOPS.push(readIOPS + writeIOPS);
+    aggregated.readLatency.push(maxAwaitTime);
+    aggregated.writeLatency.push(maxAwaitTime);
+    aggregated.diskUtilization.push(maxUtil);
+    aggregated.readThroughput.push(readKbps);
+    aggregated.writeThroughput.push(writeKbps);
+    aggregated.totalThroughput.push(readKbps + writeKbps);
+    aggregated.queueLength.push(maxQueueLength);
+    aggregated.serviceTime.push(maxSvctm);
+  });
+
+  console.log("聚合完成，数据点数量:", aggregated.timestamps.length);
+  console.log("聚合后的readIOPS样本:", aggregated.readIOPS.slice(0, 3));
+  console.log("聚合后的totalIOPS样本:", aggregated.totalIOPS.slice(0, 3));
+  if (aggregated.readIOPS.every(v => v === 0)) {
+    console.error("警告：所有readIOPS值都为0！");
   }
 
-  // 更新可用设备列表
-  availableDevices.value = Array.from(
-    new Set([...availableDevices.value, ...devices]),
-  );
-  if (availableDevices.value.length > 0 && !selectedDevice.value) {
-    selectedDevice.value = availableDevices.value[0];
-  }
+  // 更新iostatMetrics
+  Object.assign(iostatMetrics, aggregated);
+  console.log("iostatMetrics已更新");
 };
 
 // 重置IO抖动数据
@@ -1019,7 +1147,7 @@ const resetIOJitterData = () => {
   iostatMetrics.queueLength = [];
   iostatMetrics.serviceTime = [];
   availableDevices.value = [];
-  selectedDevice.value = "";
+  selectedDevices.value = [];
 };
 
 // 组件挂载时

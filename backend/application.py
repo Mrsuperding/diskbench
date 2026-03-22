@@ -243,5 +243,20 @@ if __name__ == '__main__':
             
             sys.exit(0)
     
+    # 检查端口是否可用
+    import socket
+    def check_port(port):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("0.0.0.0", port))
+                return True
+            except socket.error:
+                return False
+    
+    # 检查 5003 端口是否可用
+    if not check_port(5003):
+        print("错误: 端口 5003 已被占用，无法启动应用")
+        sys.exit(1)
+    
     # 使用 SocketIO 运行应用
-    socketio.run(app, debug=True, host='0.0.0.0', port=5004, use_reloader=False)
+    socketio.run(app, debug=True, host='0.0.0.0', port=5003, use_reloader=False)

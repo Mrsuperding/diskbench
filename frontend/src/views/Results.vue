@@ -293,6 +293,107 @@
         </el-tabs>
       </div>
     </el-card>
+
+    <!-- 日志详情对话框 -->
+    <el-dialog
+      v-model="logDetailDialogVisible"
+      title="日志详情"
+      width="85%"
+      top="5vh"
+      :close-on-click-modal="false"
+    >
+      <div v-if="currentLogDetail" class="log-detail-content">
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="日志ID">{{
+            currentLogDetail.id
+          }}</el-descriptions-item>
+          <el-descriptions-item label="日志类型">
+            <el-tag
+              :type="
+                currentLogDetail.log_type === 'iostat' ? 'success' : 'primary'
+              "
+              size="small"
+            >
+              {{
+                currentLogDetail.log_type === "iostat" ? "IOSTAT" : "FIO"
+              }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="节点ID">{{
+            currentLogDetail.node_id
+          }}</el-descriptions-item>
+          <el-descriptions-item label="任务ID">{{
+            currentLogDetail.test_task_id
+          }}</el-descriptions-item>
+          <el-descriptions-item label="文件名" :span="2">{{
+            currentLogDetail.log_filename
+          }}</el-descriptions-item>
+          <el-descriptions-item label="文件路径" :span="2">{{
+            currentLogDetail.log_path
+          }}</el-descriptions-item>
+          <el-descriptions-item label="文件大小">{{
+            formatFileSize(currentLogDetail.file_size)
+          }}</el-descriptions-item>
+          <el-descriptions-item label="收集时间">{{
+            formatDate(currentLogDetail.collection_time)
+          }}</el-descriptions-item>
+        </el-descriptions>
+
+        <div style="margin-top: 20px">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 10px;
+            "
+          >
+            <h4 style="margin: 0">日志内容</h4>
+            <el-button
+              type="primary"
+              size="small"
+              @click="downloadLog(currentLogDetail.id)"
+            >
+              下载日志
+            </el-button>
+          </div>
+          <el-scrollbar height="500px" v-if="currentLogDetail.log_content">
+            <pre
+              style="
+                font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+                font-size: 12px;
+                line-height: 1.5;
+                padding: 15px;
+                background-color: #f5f7fa;
+                border-radius: 4px;
+                margin: 0;
+                white-space: pre-wrap;
+                word-wrap: break-word;
+              "
+              >{{ currentLogDetail.log_content }}</pre>
+          </el-scrollbar>
+          <div
+            v-else
+            style="
+              color: #999;
+              padding: 40px;
+              text-align: center;
+              background-color: #f5f7fa;
+              border-radius: 4px;
+            "
+          >
+            <el-icon :size="48" color="#ccc">
+              <Document />
+            </el-icon>
+            <p style="margin-top: 10px">暂无日志内容</p>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="logDetailDialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -300,8 +401,10 @@
 import { ref, reactive, onMounted, computed, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
+import { Document } from "@element-plus/icons-vue";
 import {
   getTaskLogs,
+  getLogDetail,
   getIOStatMetrics,
   getRealtimeMetrics,
   downloadLog,
@@ -318,6 +421,8 @@ const taskId = ref(route.params.id || route.query.taskId || "1");
 // 页面状态
 const activeTab = ref("overview");
 const loading = ref(false);
+const logDetailDialogVisible = ref(false);
+const currentLogDetail = ref(null);
 const taskInfo = reactive({
   id: "",
   name: "",
@@ -836,9 +941,19 @@ const updateDataTable = () => {
 };
 
 // 查看日志详情
-const viewLogDetails = (logId) => {
-  // 跳转到日志详情页面，使用正确的路由格式
-  router.push(`/logs?logId=${logId}`);
+const viewLogDetails = async (logId) => {
+  try {
+    loading.value = true;
+    const response = await getLogDetail(logId);
+    if (response && response.data) {
+      currentLogDetail.value = response.data;
+      logDetailDialogVisible.value = true;
+    }
+  } catch (error) {
+    ElMessage.error("获取日志详情失败: " + error.message);
+  } finally {
+    loading.value = false;
+  }
 };
 
 // 处理标签页切换

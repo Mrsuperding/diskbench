@@ -117,16 +117,46 @@ def get_task_logs(task_id):
 def get_log(log_id):
     """获取日志详情"""
     try:
+        import os
+
         # 查询日志
         log = TestLog.query.get(log_id)
         if not log:
             return error_response('日志不存在', 404)
-        
+
+        # 获取日志基本信息
+        log_data = log.to_dict()
+
+        # 读取日志文件内容
+        log_content = None
+        if log.log_path and os.path.exists(log.log_path):
+            try:
+                # 限制读取文件大小，避免内存溢出（最大10MB）
+                max_size = 10 * 1024 * 1024  # 10MB
+                file_size = os.path.getsize(log.log_path)
+
+                if file_size <= max_size:
+                    with open(log.log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        log_content = f.read()
+                else:
+                    # 文件太大，只读取前10MB
+                    with open(log.log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        log_content = f.read(max_size)
+                    log_content += f'\n\n... (文件过大，仅显示前{max_size // 1024 // 1024}MB内容，完整内容请下载查看)'
+            except Exception as e:
+                logger.error(f"读取日志文件失败: {e}")
+                log_content = f"无法读取日志文件内容: {str(e)}"
+        else:
+            log_content = "日志文件不存在或路径无效"
+
+        log_data['log_content'] = log_content
+
         return success_response(
-            log.to_dict(),
+            log_data,
             message="获取日志详情成功"
         )
     except Exception as e:
+        logger.error(f"获取日志详情失败: {e}")
         return error_response(str(e), 500)
 
 @logs_bp.route('/<int:log_id>/download', methods=['GET'])

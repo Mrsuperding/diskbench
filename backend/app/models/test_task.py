@@ -12,10 +12,11 @@ class TestTask(db.Model):
     task_space_id = db.Column(db.Integer, db.ForeignKey('task_spaces.id'), nullable=True, comment='任务空间ID')
     status = db.Column(db.Enum('pending', 'running', 'completed', 'failed', 'cancelled', 'stopped', 'cancelling'), default='pending', comment='任务状态')
     priority = db.Column(db.Enum('low', 'medium', 'high'), default='medium', comment='任务优先级')
+    execution_mode = db.Column(db.Enum('parallel', 'serial'), default='parallel', comment='执行模式')
     scheduled_at = db.Column(db.DateTime, comment='计划执行时间')
     started_at = db.Column(db.DateTime, comment='开始执行时间')
     completed_at = db.Column(db.DateTime, comment='完成时间')
-    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, comment='创建人')
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, default=1, comment='创建人')
     created_at = db.Column(db.DateTime, default=datetime.utcnow, comment='创建时间')
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment='更新时间')
     
@@ -23,7 +24,8 @@ class TestTask(db.Model):
     task_executions = db.relationship('TaskExecution', backref='test_task', lazy='dynamic')
     test_results = db.relationship('TestResult', backref='test_task', lazy='dynamic')
     nodes = db.relationship('Node', secondary=task_node_association, backref=db.backref('tasks', lazy='dynamic'))
-    
+    # io_test_cases relationship is defined in IOTestCase model via backref
+
     # 索引
     __table_args__ = (
         db.Index('idx_name', 'name'),

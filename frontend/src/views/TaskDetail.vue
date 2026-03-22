@@ -821,6 +821,21 @@ export default {
       try {
         const response = await tasksApi.getTask(taskId.value);
         Object.assign(taskDetail, response.data);
+
+        // 从nodes数组提取node_ids
+        if (response.data.nodes && Array.isArray(response.data.nodes)) {
+          taskDetail.node_ids = response.data.nodes.map(node => node.id);
+        } else if (!taskDetail.node_ids) {
+          taskDetail.node_ids = [];
+        }
+
+        // 从io_test_cases数组提取io_test_case_ids
+        if (response.data.io_test_cases && Array.isArray(response.data.io_test_cases)) {
+          taskDetail.io_test_case_ids = response.data.io_test_cases.map(ioCase => ioCase.id);
+        } else if (!taskDetail.io_test_case_ids) {
+          taskDetail.io_test_case_ids = [];
+        }
+
         // 设置定时时间
         if (response.data.scheduled_at) {
           scheduledTime.value = response.data.scheduled_at;
@@ -912,30 +927,17 @@ export default {
     // 加载相关数据
     const loadRelatedData = async () => {
       try {
-        // 加载节点数据 - 支持单个节点和多个节点
+        // 加载节点数据 - 从后端返回的nodes列表中获取
         if (
-          taskDetail.node_ids &&
-          Array.isArray(taskDetail.node_ids) &&
-          taskDetail.node_ids.length > 0
+          taskDetail.nodes &&
+          Array.isArray(taskDetail.nodes) &&
+          taskDetail.nodes.length > 0
         ) {
-          // 处理多个节点
-          const nodePromises = taskDetail.node_ids.map((nodeId) =>
-            nodesApi.getNode(nodeId),
-          );
-          const nodeResponses = await Promise.all(nodePromises);
-          taskNodes.value = nodeResponses.map((response) => ({
-            ...response.data,
-            io_partitions: response.data.io_partitions || [],
+          // 直接使用后端返回的节点数据
+          taskNodes.value = taskDetail.nodes.map((node) => ({
+            ...node,
+            io_partitions: node.io_partitions || [],
           }));
-        } else if (taskDetail.node_id) {
-          // 兼容单个节点的情况
-          const nodeResponse = await nodesApi.getNode(taskDetail.node_id);
-          taskNodes.value = [
-            {
-              ...nodeResponse.data,
-              io_partitions: nodeResponse.data.io_partitions || [],
-            },
-          ];
         } else {
           // 没有节点数据
           taskNodes.value = [];
@@ -957,21 +959,32 @@ export default {
           console.log("获取到的所有IO测试用例:", allIOCases);
           console.log("任务详情:", taskDetail);
           console.log(
-            "任务详情中的IO测试用例ID列表:",
-            taskDetail.io_test_case_ids,
+            "任务详情中的IO测试用例:",
+            taskDetail.io_test_cases,
           );
 
           // 从任务详情中获取与当前任务相关的IO测试用例
+          // 优先使用 io_test_cases 对象数组，如果没有则使用 io_test_case_ids
+          let taskIOCases = [];
           if (
+            taskDetail &&
+            taskDetail.io_test_cases &&
+            Array.isArray(taskDetail.io_test_cases) &&
+            taskDetail.io_test_cases.length > 0
+          ) {
+            // 直接使用返回的IO测试用例对象
+            taskIOCases = taskDetail.io_test_cases;
+            console.log("使用taskDetail.io_test_cases:", taskIOCases);
+          } else if (
             taskDetail &&
             taskDetail.io_test_case_ids &&
             Array.isArray(taskDetail.io_test_case_ids)
           ) {
+            // 使用ID列表匹配
             const taskIOCaseIds = taskDetail.io_test_case_ids;
             console.log("任务关联的IO测试用例ID:", taskIOCaseIds);
 
             // 只获取当前任务关联的IO测试用例
-            const taskIOCases = [];
             for (const ioCaseId of taskIOCaseIds) {
               const matchedCase = allIOCases.find(
                 (ioCase) => ioCase.id === ioCaseId,
@@ -982,11 +995,12 @@ export default {
                 console.warn(`未找到ID为${ioCaseId}的IO测试用例`);
               }
             }
+          }
 
-            console.log("任务关联的IO测试用例:", taskIOCases);
+          console.log("任务关联的IO测试用例:", taskIOCases);
 
-            // 构建IO任务列表
-            if (taskIOCases.length > 0) {
+          // 构建IO任务列表
+          if (taskIOCases.length > 0) {
               ioTasks.value = taskIOCases.map((ioCase) => {
                 // 查找该IO用例的测试结果，获取真实状态
                 const ioCaseResults = testResults.value.filter(
@@ -1039,117 +1053,10 @@ export default {
                   results: ioCaseResults,
                 };
               });
-            } else {
-              // 如果没有找到任何关联的IO测试用例，显示所有IO测试用例
-              console.log("没有找到关联的IO测试用例，显示所有IO测试用例");
-              ioTasks.value = allIOCases.map((ioCase) => {
-                // 查找该IO用例的测试结果，获取真实状态
-                const ioCaseResults = testResults.value.filter(
-                  (result) => result.io_test_case_id === ioCase.id,
-                );
-
-                // 确定IO任务的状态
-                let ioStatus = "pending";
-                if (ioCaseResults.length > 0) {
-                  // 检查是否有失败的结果
-                  const hasFailed = ioCaseResults.some(
-                    (result) => result.status === "failed",
-                  );
-                  if (hasFailed) {
-                    ioStatus = "failed";
-                  } else {
-                    // 检查是否所有结果都已完成
-                    const allCompleted = ioCaseResults.every(
-                      (result) => result.status === "completed",
-                    );
-                    if (allCompleted) {
-                      ioStatus = "completed";
-                    } else {
-                      // 检查是否有运行中的结果
-                      const hasRunning = ioCaseResults.some(
-                        (result) => result.status === "running",
-                      );
-                      if (hasRunning) {
-                        ioStatus = "running";
-                      }
-                    }
-                  }
-                } else if (taskDetail.status === "completed") {
-                  // 如果任务已完成，但没有该IO用例的结果，可能是跳过了
-                  ioStatus = "skipped";
-                } else {
-                  // 否则使用任务状态
-                  ioStatus = taskDetail.status || "pending";
-                }
-
-                return {
-                  id: ioCase.id,
-                  name: ioCase.name || "未命名IO任务",
-                  type:
-                    ioCase.parameters?.read_write_mode || ioCase.type || "read",
-                  status: ioStatus,
-                  progress:
-                    ioCaseResults.length > 0 ? 100 : taskDetail.progress || 0,
-                  io_cases: [ioCase],
-                  results: ioCaseResults,
-                };
-              });
-            }
           } else {
-            // 如果任务详情中没有IO测试用例ID列表，显示所有IO测试用例
-            console.log("任务详情中没有IO测试用例ID列表，显示所有IO测试用例");
-            ioTasks.value = allIOCases.map((ioCase) => {
-              // 查找该IO用例的测试结果，获取真实状态
-              const ioCaseResults = testResults.value.filter(
-                (result) => result.io_test_case_id === ioCase.id,
-              );
-
-              // 确定IO任务的状态
-              let ioStatus = "pending";
-              if (ioCaseResults.length > 0) {
-                // 检查是否有失败的结果
-                const hasFailed = ioCaseResults.some(
-                  (result) => result.status === "failed",
-                );
-                if (hasFailed) {
-                  ioStatus = "failed";
-                } else {
-                  // 检查是否所有结果都已完成
-                  const allCompleted = ioCaseResults.every(
-                    (result) => result.status === "completed",
-                  );
-                  if (allCompleted) {
-                    ioStatus = "completed";
-                  } else {
-                    // 检查是否有运行中的结果
-                    const hasRunning = ioCaseResults.some(
-                      (result) => result.status === "running",
-                    );
-                    if (hasRunning) {
-                      ioStatus = "running";
-                    }
-                  }
-                }
-              } else if (taskDetail.status === "completed") {
-                // 如果任务已完成，但没有该IO用例的结果，可能是跳过了
-                ioStatus = "skipped";
-              } else {
-                // 否则使用任务状态
-                ioStatus = taskDetail.status || "pending";
-              }
-
-              return {
-                id: ioCase.id,
-                name: ioCase.name || "未命名IO任务",
-                type:
-                  ioCase.parameters?.read_write_mode || ioCase.type || "read",
-                status: ioStatus,
-                progress:
-                  ioCaseResults.length > 0 ? 100 : taskDetail.progress || 0,
-                io_cases: [ioCase],
-                results: ioCaseResults,
-              };
-            });
+            // 如果没有找到任何关联的IO测试用例，显示空列表
+            console.log("没有找到关联的IO测试用例，显示空列表");
+            ioTasks.value = [];
           }
 
           console.log("最终的IO任务列表:", ioTasks.value);

@@ -29,7 +29,7 @@ export default {
 
   // 执行任务
   executeTask(taskId) {
-    return request.post(`/tasks/${taskId}/execute`);
+    return request.post(`/tasks/run/${taskId}`);
   },
 
   // 暂停任务

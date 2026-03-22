@@ -323,7 +323,7 @@ export default {
 
     // 计算属性：过滤后的任务列表
     const filteredTasks = computed(() => {
-      let filtered = tasks.value;
+      let filtered = Array.isArray(tasks.value) ? tasks.value : [];
 
       // 根据当前路由过滤任务类型
       const taskType = getCurrentTaskType();
@@ -449,7 +449,13 @@ export default {
       ) {
         taskData.io_test_case_ids = [taskData.io_test_case_id];
         delete taskData.io_test_case_id;
+      } else if (!taskData.io_test_case_ids) {
+        // 如果有 io_test_cases 对象数组，提取ID
+        taskData.io_test_case_ids = taskData.io_test_cases
+          ? taskData.io_test_cases.map((ioCase) => ioCase.id)
+          : [];
       }
+
       Object.assign(taskForm, taskData);
       dialogVisible.value = true;
     };
