@@ -329,90 +329,70 @@ class LogCollector:
             return None
     
     def _parse_iostat_log(self, log_path):
-        """解析iostat日志"""
+        """解析iostat日志 - 使用动态列头解析"""
         metrics = []
-        
+
         try:
             with open(log_path, 'r') as f:
                 lines = f.readlines()
-            
+
             # iostat -xdm 1 的输出格式示例:
             # Device:         rrqm/s   wrqm/s     r/s     w/s    rMB/s    wMB/s avgrq-sz avgqu-sz   await r_await w_await  svctm  %util
             # sda               0.00     0.00    0.00    0.00     0.00     0.00     0.00     0.00    0.00    0.00    0.00   0.00   0.00
-            
-            # 查找包含Device行的索引
+
+            # 查找包含Device行的索引并解析列头
             header_index = None
+            col_map = {}
+
             for i, line in enumerate(lines):
-                if line.strip().startswith('Device:'):
+                if line.strip().startswith('Device:') or ('Device' in line and ('rrqm/s' in line or 'r/s' in line)):
                     header_index = i
+                    # 解析列头，建立列名到索引的映射
+                    headers = line.split()
+                    for idx, col_name in enumerate(headers):
+                        # 去掉冒号
+                        col_name = col_name.rstrip(':')
+                        col_map[col_name] = idx
+                    logger.info(f"iostat列头映射: {col_map}")
                     break
-            
-            if header_index is None:
-                # 尝试其他可能的格式
-                for i, line in enumerate(lines):
-                    if 'Device' in line and 'rrqm/s' in line:
-                        header_index = i
-                        break
-            
-            if header_index is None:
+
+            if header_index is None or not col_map:
                 logger.warning(f"iostat日志格式不正确，未找到设备行: {log_path}")
-                # 尝试解析所有非空行
-                for i, line in enumerate(lines):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    if ':' in line or 'Device' in line:
-                        continue
-                    parts = line.split()
-                    if len(parts) >= 10:
-                        try:
-                            device = parts[0]
-                            # 尝试不同的字段位置
-                            read_kbps = 0
-                            write_kbps = 0
-                            read_iops = 0
-                            write_iops = 0
-                            await_time = 0
-                            svctm = 0
-                            util = 0
-                            
-                            # 尝试不同的字段索引
-                            if len(parts) >= 14:
-                                # 标准格式
-                                read_kbps = float(parts[5]) * 1024
-                                write_kbps = float(parts[6]) * 1024
-                                read_iops = float(parts[2])
-                                write_iops = float(parts[3])
-                                await_time = float(parts[9])
-                                svctm = float(parts[12])
-                                util = float(parts[13])
-                            elif len(parts) >= 10:
-                                # 简化格式
-                                read_iops = float(parts[2]) if len(parts) > 2 else 0
-                                write_iops = float(parts[3]) if len(parts) > 3 else 0
-                                read_kbps = float(parts[5]) * 1024 if len(parts) > 5 else 0
-                                write_kbps = float(parts[6]) * 1024 if len(parts) > 6 else 0
-                                await_time = float(parts[7]) if len(parts) > 7 else 0
-                                util = float(parts[9]) if len(parts) > 9 else 0
-                            
-                            metrics.append({
-                                'timestamp': datetime.now(),
-                                'device': device,
-                                'read_kbps': read_kbps,
-                                'write_kbps': write_kbps,
-                                'read_iops': read_iops,
-                                'write_iops': write_iops,
-                                'await_time': await_time,
-                                'svctm': svctm,
-                                'util': util
-                            })
-                        except:
-                            continue
                 return metrics
-            
+
+            # 定义需要的列名及其可能的别名
+            # 不同版本的iostat可能使用不同的列名
+            col_aliases = {
+                'r/s': ['r/s', 'rs', 'read_io'],
+                'w/s': ['w/s', 'ws', 'write_io'],
+                'rMB/s': ['rMB/s', 'rkB/s', 'rKB/s', 'read_mb', 'rmb'],
+                'wMB/s': ['wMB/s', 'wkB/s', 'wKB/s', 'write_mb', 'wmb'],
+                'await': ['await', 'wait', 'avg_wait'],
+                'svctm': ['svctm', 'svc_time', 'service_time'],
+                '%util': ['%util', 'util', 'utilization', '%utilization']
+            }
+
+            # 根据别名查找实际的列索引
+            def find_col_index(aliases):
+                for alias in aliases:
+                    if alias in col_map:
+                        return col_map[alias]
+                return None
+
+            # 获取关键列的索引
+            idx_r_s = find_col_index(col_aliases['r/s'])
+            idx_w_s = find_col_index(col_aliases['w/s'])
+            idx_rMB_s = find_col_index(col_aliases['rMB/s'])
+            idx_wMB_s = find_col_index(col_aliases['wMB/s'])
+            idx_await = find_col_index(col_aliases['await'])
+            idx_svctm = find_col_index(col_aliases['svctm'])
+            idx_util = find_col_index(col_aliases['%util'])
+
+            logger.info(f"iostat关键列索引: r/s={idx_r_s}, w/s={idx_w_s}, rMB/s={idx_rMB_s}, wMB/s={idx_wMB_s}, await={idx_await}, svctm={idx_svctm}, %util={idx_util}")
+
             # 获取当前时间，用于计算采集时间戳
             current_time = datetime.now()
-            
+
             # 解析指标数据
             device_data = []
             in_data_section = False
@@ -423,47 +403,62 @@ class LogCollector:
                     device_data = []
                     in_data_section = False
                     continue
-                
-                if 'Device:' in line:
-                    # 新的设备头，重置设备数据
+
+                if 'Device:' in line or 'Device' in line:
+                    # 新的设备头，重新解析列头
+                    headers = line.split()
+                    col_map = {}
+                    for idx, col_name in enumerate(headers):
+                        col_name = col_name.rstrip(':')
+                        col_map[col_name] = idx
+
+                    # 重新获取列索引
+                    idx_r_s = find_col_index(col_aliases['r/s'])
+                    idx_w_s = find_col_index(col_aliases['w/s'])
+                    idx_rMB_s = find_col_index(col_aliases['rMB/s'])
+                    idx_wMB_s = find_col_index(col_aliases['wMB/s'])
+                    idx_await = find_col_index(col_aliases['await'])
+                    idx_svctm = find_col_index(col_aliases['svctm'])
+                    idx_util = find_col_index(col_aliases['%util'])
+
                     device_data = []
                     in_data_section = False
                     continue
-                
+
                 # 解析设备数据行
                 parts = line.split()
-                if len(parts) < 10:
+                if len(parts) < 5:  # 至少需要设备名和几个数据字段
                     continue
-                
+
                 try:
                     device = parts[0]
-                    # 尝试不同的字段位置
-                    read_kbps = 0
-                    write_kbps = 0
-                    read_iops = 0
-                    write_iops = 0
-                    await_time = 0
-                    svctm = 0
-                    util = 0
-                    
-                    # 标准格式
-                    if len(parts) >= 14:
-                        read_kbps = float(parts[5]) * 1024  # 转换为KB/s
-                        write_kbps = float(parts[6]) * 1024  # 转换为KB/s
-                        read_iops = float(parts[2])
-                        write_iops = float(parts[3])
-                        await_time = float(parts[9])
-                        svctm = float(parts[12])
-                        util = float(parts[13])
-                    elif len(parts) >= 10:
-                        # 简化格式
-                        read_iops = float(parts[2]) if len(parts) > 2 else 0
-                        write_iops = float(parts[3]) if len(parts) > 3 else 0
-                        read_kbps = float(parts[5]) * 1024 if len(parts) > 5 else 0
-                        write_kbps = float(parts[6]) * 1024 if len(parts) > 6 else 0
-                        await_time = float(parts[7]) if len(parts) > 7 else 0
-                        util = float(parts[9]) if len(parts) > 9 else 0
-                    
+
+                    # 使用动态索引提取数据
+                    read_iops = float(parts[idx_r_s]) if idx_r_s is not None and len(parts) > idx_r_s else 0
+                    write_iops = float(parts[idx_w_s]) if idx_w_s is not None and len(parts) > idx_w_s else 0
+
+                    # 读写吞吐量，如果是rMB/s则转换为KB/s，如果是rkB/s则直接使用
+                    read_throughput = float(parts[idx_rMB_s]) if idx_rMB_s is not None and len(parts) > idx_rMB_s else 0
+                    write_throughput = float(parts[idx_wMB_s]) if idx_wMB_s is not None and len(parts) > idx_wMB_s else 0
+
+                    # 判断单位是MB还是KB
+                    read_col_name = None
+                    for alias in col_aliases['rMB/s']:
+                        if alias in col_map:
+                            read_col_name = alias
+                            break
+
+                    if read_col_name and ('MB' in read_col_name or 'mb' in read_col_name):
+                        read_kbps = read_throughput * 1024  # MB/s → KB/s
+                        write_kbps = write_throughput * 1024
+                    else:
+                        read_kbps = read_throughput  # 已经是KB/s
+                        write_kbps = write_throughput
+
+                    await_time = float(parts[idx_await]) if idx_await is not None and len(parts) > idx_await else 0
+                    svctm = float(parts[idx_svctm]) if idx_svctm is not None and len(parts) > idx_svctm else 0
+                    util = float(parts[idx_util]) if idx_util is not None and len(parts) > idx_util else 0
+
                     metrics.append({
                         'timestamp': current_time - timedelta(seconds=len(lines[header_index+1:])-i),
                         'device': device,
