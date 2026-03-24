@@ -16,6 +16,7 @@ from app.models.test_log import TestLog
 from app import db
 from app.utils.task_executor import execute_node_task
 from app.utils.decorators import with_app_context
+from app.views.socket_events import send_task_log
 
 # 创建蓝图
 tasks_bp = Blueprint('tasks', __name__)
@@ -73,20 +74,6 @@ def get_task_io_test_cases(task_id, db):
         return []
 
 
-def send_task_log(task_id, message, level='INFO', context=None):
-    """发送任务日志"""
-    try:
-        # LogCollector没有emit_task_log方法,暂时使用logger记录
-        if level == 'ERROR':
-            logger.error(f"Task {task_id}: {message}")
-        elif level == 'WARNING':
-            logger.warning(f"Task {task_id}: {message}")
-        else:
-            logger.info(f"Task {task_id}: {message}")
-    except Exception as e:
-        logger.error(f"发送任务日志失败: {e}")
-
-
 def run_task_execution(task_id, execution_id, app):
     """执行任务的实际逻辑"""
     # 使用应用上下文装饰器
@@ -103,21 +90,34 @@ def run_task_execution(task_id, execution_id, app):
         
         try:
             logging.info(f"-----------开始执行任务: task_id={task_id}, execution_id={execution_id}------------")
-            
+
             logging.info(f"创建应用上下文，开始查询数据库")
-            
+
             # 获取任务信息
             task, execution = get_task_info(task_id, execution_id, db)
-            
+
+            # 发送任务开始阶段
+            send_task_log(task_id, f"任务开始",
+                        level='INFO',
+                        context={'operation': 'task_start', 'stage': '任务开始', 'task_name': task.name})
+
             # 获取任务关联的节点
             nodes = get_task_nodes(task)
-            
+
             # 获取任务关联的IO测试用例
             io_test_cases = get_task_io_test_cases(task_id, db)
-            
+
+            # 发送详细的任务开始信息
+            node_names = [f"{node.name}({node.ip_address})" for node in nodes]
+            io_model_names = [case.name for case in io_test_cases]
+            send_task_log(task_id, f"任务开始：准备在 {len(nodes)} 个节点上执行 {len(io_test_cases)} 个IO模型",
+                        level='INFO',
+                        context={'operation': 'task_start', 'stage': '任务开始', 'task_name': task.name,
+                                'nodes': node_names, 'io_models': io_model_names, 'node_count': len(nodes), 'io_case_count': len(io_test_cases)})
+
             # 为每个节点执行任务
             logging.info(f"开始为每个节点执行任务，节点数量: {len(nodes)}")
-            
+
             # 获取执行模式，默认为并行
             execution_mode = task.execution_mode if hasattr(task, 'execution_mode') else 'parallel'
             logging.info(f"任务执行模式: {execution_mode}")
@@ -164,14 +164,22 @@ def run_task_execution(task_id, execution_id, app):
                 task.status = 'failed'
                 execution.status = 'failed'
                 execution.error_message = '; '.join(failure_reasons)
-                send_task_log(task_id, f"任务执行失败: {'; '.join(failure_reasons)}", level='ERROR', context={'operation': 'task_failed'})
+                send_task_log(task_id, f"任务执行失败",
+                            level='ERROR',
+                            context={'operation': 'task_failed', 'stage': '任务失败', 'failure_count': len(failure_reasons)})
                 logging.error(f"任务执行失败: {'; '.join(failure_reasons)}")
             else:
                 # 任务成功
                 task.status = 'completed'
                 execution.status = 'completed'
                 execution.duration = int((datetime.utcnow() - execution.start_time).total_seconds()) if execution.start_time else 0
-                send_task_log(task_id, "任务执行完成", level='INFO', context={'operation': 'task_completed'})
+
+                # 发送详细的完成信息
+                node_count = len(task.nodes) if hasattr(task, 'nodes') else 0
+                io_case_count = len(get_task_io_test_cases(task_id, db))
+                send_task_log(task_id, f"任务完成：共测试 {node_count} 个节点，执行 {io_case_count} 个IO模型，耗时 {execution.duration} 秒",
+                            level='INFO',
+                            context={'operation': 'task_completed', 'stage': '任务完成', 'duration': execution.duration, 'node_count': node_count, 'io_case_count': io_case_count})
                 logging.info("任务执行完成")
             
             # 更新完成时间
@@ -181,14 +189,12 @@ def run_task_execution(task_id, execution_id, app):
             # 提交事务
             db.session.commit()
             logging.info(f"任务状态更新成功: task_id={task_id}, status={task.status}")
-            
-            # 7. 发送任务完成通知
-            send_task_log(task_id, f"任务 {task.name} 执行完成，状态: {task.status}", level='INFO', context={'operation': 'task_complete_notification'})
-            logging.info(f"任务 {task.name} 执行完成，状态: {task.status}")
-        
+
         except Exception as e:
             logging.error(f"执行任务时发生异常: {e}", exc_info=True)
-            send_task_log(task_id, f"任务执行失败: {str(e)}", level='ERROR', context={'operation': 'task_exception'})
+            send_task_log(task_id, f"任务执行异常",
+                        level='ERROR',
+                        context={'operation': 'task_exception', 'stage': '任务异常', 'error': str(e)})
             
             # 更新任务状态为失败
             try:
@@ -203,6 +209,9 @@ def run_task_execution(task_id, execution_id, app):
         
         finally:
             # 清理资源
+            send_task_log(task_id, f"终止任务：回收线程资源和清理临时文件",
+                        level='INFO',
+                        context={'operation': 'cleanup_resources', 'stage': '资源回收'})
             logging.info(f"清理任务执行资源: task_id={task_id}")
             logging.info(f"-----------任务执行结束: task_id={task_id}, execution_id={execution_id}------------")
     
@@ -330,41 +339,77 @@ def get_task(task_id):
 
 @tasks_bp.route('/', methods=['GET'])
 def get_tasks():
-    """获取任务列表"""
+    """获取任务列表（优化版 - 使用 eager loading 避免 N+1 查询）"""
     try:
-        tasks = db.session.query(TestTask).order_by(TestTask.created_at.desc()).all()
+        from sqlalchemy.orm import joinedload
+        from app.models import task_case_association, task_node_association
 
-        # 为每个任务获取关联的节点和IO测试用例
+        # 使用 joinedload 一次性加载所有关联数据
+        tasks = db.session.query(TestTask)\
+            .options(joinedload(TestTask.nodes))\
+            .order_by(TestTask.created_at.desc())\
+            .all()
+
+        # 批量获取所有任务的测试用例ID（一次查询）
+        task_ids = [task.id for task in tasks]
+        case_associations = db.session.query(
+            task_case_association.c.test_task_id,
+            task_case_association.c.io_test_case_id
+        ).filter(
+            task_case_association.c.test_task_id.in_(task_ids)
+        ).all() if task_ids else []
+
+        # 构建任务ID到测试用例ID的映射
+        task_case_map = {}
+        for task_id, case_id in case_associations:
+            if task_id not in task_case_map:
+                task_case_map[task_id] = []
+            task_case_map[task_id].append(case_id)
+
+        # 批量获取所有需要的测试用例信息（一次查询）
+        all_case_ids = list(set([case_id for _, case_id in case_associations]))
+        io_cases_query = db.session.query(IOTestCase).filter(
+            IOTestCase.id.in_(all_case_ids)
+        ).all() if all_case_ids else []
+        io_cases_dict = {case.id: case for case in io_cases_query}
+
+        # 构建返回数据（只返回列表页面需要的字段）
         tasks_data = []
         for task in tasks:
-            # 获取节点列表
-            nodes = task.nodes if hasattr(task, 'nodes') else []
+            # 节点信息（已通过 joinedload 加载，不会触发额外查询）
+            nodes_data = [{
+                'id': node.id,
+                'name': node.name,
+                'ip_address': node.ip_address,
+                'status': node.status
+                # ❌ 删除 io_partitions - 列表页面不需要
+            } for node in task.nodes]
 
-            # 获取IO测试用例列表
-            io_test_cases = get_task_io_test_cases(task.id, db)
+            # 测试用例信息（从缓存中获取）
+            case_ids = task_case_map.get(task.id, [])
+            io_test_cases_data = [{
+                'id': case_id,
+                'name': io_cases_dict[case_id].name
+            } for case_id in case_ids if case_id in io_cases_dict]
 
             tasks_data.append({
                 'id': task.id,
                 'name': task.name,
                 'description': task.description,
                 'status': task.status,
+                'priority': task.priority if hasattr(task, 'priority') else 'medium',
                 'execution_mode': task.execution_mode,
-                'created_at': task.created_at,
-                'updated_at': task.updated_at,
-                'completed_at': task.completed_at,
-                'nodes': [{
-                    'id': node.id,
-                    'name': node.name,
-                    'ip_address': node.ip_address,
-                    'status': node.status,
-                    'io_partitions': node.io_partitions if hasattr(node, 'io_partitions') else []
-                } for node in nodes],
-                'io_test_cases': [{
-                    'id': case.id,
-                    'name': case.name
-                } for case in io_test_cases]
+                'created_at': task.created_at.isoformat() if task.created_at else None,
+                'updated_at': task.updated_at.isoformat() if task.updated_at else None,
+                'completed_at': task.completed_at.isoformat() if task.completed_at else None,
+                'task_space_id': task.task_space_id if hasattr(task, 'task_space_id') else None,
+                'progress': 0,  # 默认进度，前端可以计算
+                'nodes': nodes_data,
+                'io_test_cases': io_test_cases_data,
+                'io_test_case_ids': case_ids  # 保持兼容性
             })
 
+        logger.info(f"获取任务列表成功，共 {len(tasks_data)} 个任务")
         return jsonify({
             'success': True,
             'message': '获取任务列表成功',
@@ -373,6 +418,8 @@ def get_tasks():
 
     except Exception as e:
         logger.error(f"获取任务列表失败: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return jsonify({
             'success': False,
             'message': f'获取任务列表失败: {str(e)}',
@@ -522,6 +569,61 @@ def update_task(task_id):
         }), 500
 
 
+@tasks_bp.route('/<int:task_id>/pause', methods=['POST'])
+def pause_task(task_id):
+    """暂停任务"""
+    try:
+        task = db.session.query(TestTask).filter_by(id=task_id).first()
+        if not task:
+            return jsonify({
+                'success': False,
+                'message': '任务不存在',
+                'data': None
+            }), 404
+
+        # 只能暂停正在运行的任务
+        if task.status != 'running':
+            return jsonify({
+                'success': False,
+                'message': f'只能暂停正在运行的任务，当前状态：{task.status}',
+                'data': None
+            }), 400
+
+        # 更新任务状态为暂停
+        task.status = 'paused'
+
+        # 更新最近的执行记录状态
+        latest_execution = db.session.query(TaskExecution).filter_by(
+            test_task_id=task_id
+        ).order_by(TaskExecution.start_time.desc()).first()
+
+        if latest_execution:
+            latest_execution.status = 'paused'
+
+        db.session.commit()
+
+        # 发送暂停日志
+        from app.views.socket_events import send_task_log
+        send_task_log(task_id, f"任务已暂停",
+                    level='INFO',
+                    context={'operation': 'task_paused', 'stage': '任务暂停'})
+
+        return jsonify({
+            'success': True,
+            'message': '任务已暂停',
+            'data': task.to_dict()
+        }), 200
+
+    except Exception as e:
+        logger.error(f"暂停任务失败: {e}")
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': f'暂停任务失败: {str(e)}',
+            'data': None
+        }), 500
+
+
 @tasks_bp.route('/<int:task_id>', methods=['DELETE'])
 def delete_task(task_id):
     """删除任务"""
@@ -533,65 +635,66 @@ def delete_task(task_id):
                 'message': '任务不存在',
                 'data': None
             }), 404
-        
-        # 获取任务相关的测试日志ID
-        from app.models import TestLog
+
+        # 按依赖顺序删除关联数据
+        # 1. 删除 iostat_metrics（依赖 test_logs）
+        from app.models import TestLog, IOStatMetric
         test_logs = db.session.query(TestLog).filter_by(test_task_id=task_id).all()
         test_log_ids = [log.id for log in test_logs]
-        
-        # 删除关联的iostat_metrics记录
+
         if test_log_ids:
-            from app.models import IOStatMetric
             db.session.query(IOStatMetric).filter(IOStatMetric.test_log_id.in_(test_log_ids)).delete(synchronize_session=False)
-        
-        # 删除关联的测试结果
-        from app.models import TestResult
-        db.session.query(TestResult).filter_by(test_task_id=task_id).delete()
-        
-        # 删除关联的测试日志
-        db.session.query(TestLog).filter_by(test_task_id=task_id).delete()
-        
-        # 获取任务相关的执行记录ID
+
+        # 2. 删除 io_performance_data（依赖 task_executions）
+        from app.models import IOPerformanceData
         executions = db.session.query(TaskExecution).filter_by(test_task_id=task_id).all()
         execution_ids = [exec.id for exec in executions]
-        
-        # 删除关联的io_performance_data记录
+
         if execution_ids:
-            from app.models import IOPerformanceData
             db.session.query(IOPerformanceData).filter(IOPerformanceData.task_execution_id.in_(execution_ids)).delete(synchronize_session=False)
-        
-        # 删除关联的执行记录
-        db.session.query(TaskExecution).filter_by(test_task_id=task_id).delete()
-        
-        # 清空关联的节点和测试用例（通过关联表）
-        try:
-            # 重新加载任务以确保关联正确
-            db.session.refresh(task)
-            # 清空节点关联
-            if hasattr(task, 'nodes'):
-                nodes_list = list(task.nodes)
-                for node in nodes_list:
-                    task.nodes.remove(node)
-            # 清空测试用例关联
-            if hasattr(task, 'io_test_cases'):
-                test_cases_list = list(task.io_test_cases)
-                for test_case in test_cases_list:
-                    task.io_test_cases.remove(test_case)
-        except Exception as e:
-            logger.error(f"清空关联数据失败: {e}")
-            # 继续执行，不中断删除流程
-        
-        # 删除任务
+
+        # 3. 删除 test_results
+        from app.models import TestResult
+        db.session.query(TestResult).filter_by(test_task_id=task_id).delete(synchronize_session=False)
+
+        # 4. 删除 test_logs
+        db.session.query(TestLog).filter_by(test_task_id=task_id).delete(synchronize_session=False)
+
+        # 5. 删除 task_operation_logs
+        from app.models.task_operation_log import TaskOperationLog
+        db.session.query(TaskOperationLog).filter_by(test_task_id=task_id).delete(synchronize_session=False)
+
+        # 6. 删除 task_executions
+        db.session.query(TaskExecution).filter_by(test_task_id=task_id).delete(synchronize_session=False)
+
+        # 7. 清空多对多关联表（task_case_association 和 task_node_association）
+        # 通过直接删除关联表记录，而不是通过 ORM 关系
+        from app.models import task_case_association, task_node_association
+        db.session.execute(
+            task_case_association.delete().where(
+                task_case_association.c.test_task_id == task_id
+            )
+        )
+        db.session.execute(
+            task_node_association.delete().where(
+                task_node_association.c.test_task_id == task_id
+            )
+        )
+
+        # 8. 最后删除任务本身
         db.session.delete(task)
         db.session.commit()
-        
+
+        logger.info(f"成功删除任务: task_id={task_id}")
         return jsonify({
             'success': True,
             'message': '删除任务成功',
             'data': None
         }), 200
+
     except Exception as e:
-        logger.error(f"删除任务失败: {e}")
+        logger.error(f"删除任务失败: {e}", exc_info=True)
+        db.session.rollback()
         return jsonify({
             'success': False,
             'message': f'删除任务失败: {str(e)}',
@@ -743,5 +846,45 @@ def get_task_results(task_id):
         return jsonify({
             'success': False,
             'message': f'获取任务结果失败: {str(e)}',
+            'data': None
+        }), 500
+
+
+@tasks_bp.route('/<int:task_id>/operation-logs', methods=['GET'])
+def get_task_operation_logs(task_id):
+    """获取任务的操作日志"""
+    try:
+        from app.models.task_operation_log import TaskOperationLog
+
+        # 验证任务是否存在
+        task = db.session.query(TestTask).filter_by(id=task_id).first()
+        if not task:
+            return jsonify({
+                'success': False,
+                'message': '任务不存在',
+                'data': None
+            }), 404
+
+        # 获取limit参数，默认100条
+        limit = request.args.get('limit', 100, type=int)
+        limit = min(limit, 500)  # 最多500条
+
+        # 获取任务的操作日志（按时间正序，显示执行流程）
+        logs = TaskOperationLog.query.filter_by(test_task_id=task_id)\
+            .order_by(TaskOperationLog.timestamp.asc())\
+            .limit(limit)\
+            .all()
+
+        return jsonify({
+            'success': True,
+            'message': '获取操作日志成功',
+            'data': [log.to_dict() for log in logs]
+        }), 200
+
+    except Exception as e:
+        logger.error(f"获取操作日志失败: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'获取操作日志失败: {str(e)}',
             'data': None
         }), 500

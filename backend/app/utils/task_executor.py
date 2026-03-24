@@ -98,68 +98,124 @@ def generate_io_model_name(io_type, blocksize, iodepth, numjobs):
     
     return f"{blocksize}_{iodepth}d_{io_type}_{numjobs}n"
 
-def process_io_test_case(ssh_client, task_id, execution_id, node, io_test_case, app):
-    """处理单个 IO 测试用例"""
+def parse_partitions(node):
+    """解析节点的分区配置
+
+    返回分区列表，每个元素是：
+    - 单个分区路径（如 '/dev/vdb'）
+    - 或多个逗号分隔的分区路径（如 '/dev/vdb,/dev/vdc'，用于FIO同时测试多设备）
+
+    规则：
+    1. 如果某个分区的path包含逗号，视为"同时测试多个设备"，返回完整字符串
+    2. 如果有多个分区对象，每个分区单独返回，依次测试
+    """
+    partitions = []
+
+    if not node.io_partitions or len(node.io_partitions) == 0:
+        return partitions
+
+    for partition_obj in node.io_partitions:
+        if isinstance(partition_obj, dict) and 'path' in partition_obj:
+            path = partition_obj['path']
+        else:
+            path = str(partition_obj)
+
+        # 添加到分区列表
+        partitions.append(path.strip())
+
+    return partitions
+
+def process_io_test_case(ssh_client, task_id, execution_id, node, io_test_case, partition_path, app):
+    """处理单个 IO 测试用例在指定分区上的执行
+
+    Args:
+        ssh_client: SSH客户端
+        task_id: 任务ID
+        execution_id: 执行ID
+        node: 节点对象
+        io_test_case: IO测试用例对象
+        partition_path: 分区路径（可能包含逗号分隔的多个路径）
+        app: Flask应用对象
+    """
     from app.models.test_task import TestTask
     from app.models import db
-    
+
     node_failed = False
     error_message = ""
-    
+
     try:
-        # 第三阶段：上传工具后日志打印出当前下的 IO 是什么 IO 模型
+        # 第三阶段：IO 模型执行阶段
         logging.info(f"===== 第三阶段：IO 模型执行阶段 =====")
         logging.info(f"当前执行的 IO 模型：{io_test_case.name}")
         logging.info(f"IO 模型 ID: {io_test_case.id}")
         logging.info(f"IO 模型工具：{io_test_case.tool}")
-        
-        send_task_log(task_id, f"节点 {node.ip_address} 开始执行 IO 模型：{io_test_case.name}", 
-                    level='INFO', 
-                    context={'node_id': node.id, 'io_test_case_id': io_test_case.id, 
-                            'io_test_case_name': io_test_case.name, 'operation': 'execute_io_model'})
-        
-        # 执行IO测试
-        logging.info(f"运行IO测试: {io_test_case.name}")
-        
+        logging.info(f"目标分区：{partition_path}")
+
         # 构建fio命令
         fio_params = io_test_case.parameters
-        
-        # 添加IO分区到测试参数
-        if node.io_partitions and len(node.io_partitions) > 0:
-            # 获取第一个分区作为测试设备
-            partition = node.io_partitions[0]
-            if isinstance(partition, dict) and 'path' in partition:
-                fio_params['filename'] = partition['path']
+
+        # 设置分区路径
+        if partition_path:
+            # 使用节点配置的分区
+            fio_params['filename'] = partition_path
+            logging.info(f"使用节点配置的分区: {fio_params['filename']}")
+
+            # 判断是单设备还是多设备测试
+            if ',' in partition_path:
+                partition_display = f"{partition_path}（多设备同时测试）"
             else:
-                # 兼容旧格式，直接使用分区路径
-                fio_params['filename'] = partition
-            logging.info(f"添加IO分区到测试参数: {fio_params['filename']}")
-        elif 'partitions' in fio_params and fio_params['partitions']:
-            # 从测试用例参数中获取分区信息
-            fio_params['filename'] = fio_params['partitions']
-            logging.info(f"从测试用例参数中获取分区信息: {fio_params['filename']}")
-        
-        # 收集IO性能抖动数据
-        send_task_log(task_id, f"节点 {node.ip_address} 正在收集IO性能抖动数据...", 
-                    level='INFO', 
-                    context={'node_id': node.id, 'io_test_case_id': io_test_case.id, 'operation': 'collect_jitter_data'})
-        logging.info(f"收集IO性能抖动数据: {node.ip_address}")
-        
-        # 启动iostat收集后台数据
+                partition_display = partition_path
+        else:
+            # 使用测试用例中的默认配置
+            if 'filename' in fio_params:
+                partition_display = fio_params.get('filename', '测试用例默认')
+            elif 'partitions' in fio_params:
+                fio_params['filename'] = fio_params['partitions']
+                partition_display = fio_params['filename']
+            else:
+                partition_display = "未指定"
+            logging.info(f"使用测试用例默认配置: {partition_display}")
+
+        send_task_log(task_id, f"节点 {node.ip_address} - 执行IO模型：{io_test_case.name}（分区: {partition_display}）",
+                    level='INFO',
+                    context={'node_id': node.id, 'node_ip': node.ip_address, 'io_test_case_id': io_test_case.id,
+                            'io_model': io_test_case.name, 'partition': partition_display, 'operation': 'execute_io_model', 'stage': '执行IO模型', 'progress': 'start'})
+
+        # 执行IO测试
+        logging.info(f"运行IO测试: {io_test_case.name}")
+
+        # 启动iostat收集后台数据（在FIO执行之前）
         iostat_log = f'/tmp/iostat_{task_id}_{execution_id}_{node.id}_{io_test_case.id}.log'
         ssh_client.execute_command(f"sh -c 'iostat -xdm 1 > {iostat_log} 2>&1 & echo $! > /tmp/iostat_pid.txt'")
-        
-        # 执行IO测试
-        result = ssh_client.run_fio_test(fio_params)
+        logging.info(f"iostat后台监控已启动: {iostat_log}")
+
+        # 执行IO测试，传入回调函数用于发送每个组合的FIO命令日志
+        def log_fio_command(fio_cmd, io_type, iodepth, blocksize):
+            """记录实际执行的FIO命令"""
+            send_task_log(task_id, f"节点 {node.ip_address} - 执行FIO命令：{fio_cmd}",
+                        level='INFO',
+                        context={'node_id': node.id, 'node_ip': node.ip_address, 'io_test_case_id': io_test_case.id,
+                                'io_model': io_test_case.name, 'fio_command': fio_cmd, 'io_type': io_type,
+                                'iodepth': iodepth, 'blocksize': blocksize, 'operation': 'fio_command', 'stage': '执行IO模型'})
+
+        send_task_log(task_id, f"节点 {node.ip_address} - 执行IO模型：正在运行FIO测试（{io_test_case.name}）...",
+                    level='INFO',
+                    context={'node_id': node.id, 'node_ip': node.ip_address, 'io_test_case_id': io_test_case.id, 'io_model': io_test_case.name, 'operation': 'running_fio', 'stage': '执行IO模型'})
+        result = ssh_client.run_fio_test(fio_params, log_callback=log_fio_command)
         logging.info(f"IO测试结果: success={result['success']}")
+
+        # FIO执行完成后开始收集日志阶段
+        send_task_log(task_id, f"节点 {node.ip_address} - 收集日志阶段：FIO执行完成，开始收集iostat性能数据",
+                    level='INFO',
+                    context={'node_id': node.id, 'node_ip': node.ip_address, 'io_test_case_id': io_test_case.id, 'operation': 'collect_logs', 'stage': '收集日志阶段', 'progress': 'start'})
         
         # 检查任务状态，看是否被取消
         task = TestTask.query.get(task_id)
         if task.status == 'cancelled':
             logging.info(f"任务已被取消，停止执行: task_id={task_id}")
-            send_task_log(task_id, f"节点 {node.ip_address} 任务已被取消，停止执行", 
-                        level='WARNING', 
-                        context={'node_id': node.id, 'operation': 'cancel_task'})
+            send_task_log(task_id, f"节点 {node.ip_address} - 任务已取消",
+                        level='WARNING',
+                        context={'node_id': node.id, 'node_ip': node.ip_address, 'operation': 'cancel_task', 'stage': '任务取消'})
             node_failed = True
             error_message = "任务已被取消"
             # 停止iostat收集
@@ -167,11 +223,21 @@ def process_io_test_case(ssh_client, task_id, execution_id, node, io_test_case, 
             return node_failed, error_message
         
         # 停止iostat收集
+        send_task_log(task_id, f"节点 {node.ip_address} - 收集日志阶段：停止iostat监控，开始解析数据",
+                    level='INFO',
+                    context={'node_id': node.id, 'node_ip': node.ip_address, 'io_test_case_id': io_test_case.id, 'operation': 'stop_iostat', 'stage': '收集日志阶段'})
         ssh_client.execute_command(f'pkill -f "iostat -xdm 1"')
-        
+
         if result['success']:
+            send_task_log(task_id, f"节点 {node.ip_address} - IO模型执行成功：{io_test_case.name}",
+                        level='INFO',
+                        context={'node_id': node.id, 'node_ip': node.ip_address, 'io_test_case_id': io_test_case.id, 'io_model': io_test_case.name, 'operation': 'io_model_success', 'stage': '执行完成'})
+
             # 保存测试结果
             logging.info(f"保存测试结果: task_id={task_id}, node_id={node.id}, case_id={io_test_case.id}")
+            send_task_log(task_id, f"节点 {node.ip_address} - 保存测试结果到数据库",
+                        level='INFO',
+                        context={'node_id': node.id, 'node_ip': node.ip_address, 'io_test_case_id': io_test_case.id, 'operation': 'save_results', 'stage': '保存结果'})
             test_result = TestResult(
                 test_task_id=task_id,
                 node_id=node.id,
@@ -470,22 +536,16 @@ EOF'''
             detailed_info += f"  读写比例: {fio_params.get('read_write_ratio', '100:0')}\n"
             detailed_info += f"  测试文件大小: {fio_params.get('size', '1G')}\n"
             detailed_info += f"  执行时间: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
-            
-            send_task_log(task_id, detailed_info, level='INFO', context={'node_id': node.id, 'io_test_case_id': io_test_case.id, 'operation': 'complete_io_model'})
-            logging.info(detailed_info)
-            
-            send_task_log(task_id, f"节点 {node.ip_address} 完成IO模型: {io_test_case.name}", 
-                        level='INFO', 
-                        context={'node_id': node.id, 'io_test_case_id': io_test_case.id, 
-                                'io_test_case_name': io_test_case.name, 'operation': 'complete_io_model'})
+
+
             logging.info(f"节点 {node.ip_address} 完成IO模型: {io_test_case.name}")
         else:
             error_msg = f"IO测试失败: {io_test_case.name}, 错误: {result['raw_output'][:200]}"
             logging.error(error_msg)
-            send_task_log(task_id, f"节点 {node.ip_address} 执行IO模型 {io_test_case.name} 失败: {result['raw_output'][:100]}...", 
-                        level='ERROR', 
-                        context={'node_id': node.id, 'io_test_case_id': io_test_case.id, 
-                                'io_test_case_name': io_test_case.name, 'operation': 'execute_io_model'})
+            send_task_log(task_id, f"节点 {node.ip_address} - IO模型执行失败",
+                        level='ERROR',
+                        context={'node_id': node.id, 'node_ip': node.ip_address, 'io_test_case_id': io_test_case.id,
+                                'io_model': io_test_case.name, 'operation': 'execute_io_model', 'stage': '执行失败', 'error': result['raw_output'][:100]})
             
             # 记录失败的详细信息
             fail_info = f"IO模型 {io_test_case.name} 执行失败，详细信息：\n"
@@ -560,61 +620,91 @@ def execute_node_task(node, task_id, execution_id, io_test_cases, app):
             
             # 1. 检测节点架构
             logging.info(f"检测节点架构: {connect_host}")
-            send_task_log(task_id, f"节点 {node.ip_address} 正在检测架构...", 
-                        level='INFO', 
-                        context={'node_id': node.id, 'operation': 'detect_architecture'})
+            send_task_log(task_id, f"节点 {node.ip_address} - 上传工具阶段：开始上传FIO工具",
+                        level='INFO',
+                        context={'node_id': node.id, 'node_ip': node.ip_address, 'operation': 'upload_tool', 'stage': '上传工具阶段', 'progress': 'start'})
             architecture = detect_node_architecture(ssh_client)
             logging.info(f"节点 {connect_host} 架构: {architecture}")
-            send_task_log(task_id, f"节点 {node.ip_address} 架构检测完成: {architecture}", 
-                        level='INFO', 
-                        context={'node_id': node.id, 'architecture': architecture, 'operation': 'detect_architecture'})
-            
+
             # 第一阶段：打印当前任务的节点和下IO的分区
             logging.info(f"===== 第一阶段：任务节点和IO分区信息 =====")
             logging.info(f"当前任务节点: {node.name} ({node.ip_address})")
-            
+
             # 显示所有IO分区
+            partition_info = ""
             if node.io_partitions and len(node.io_partitions) > 0:
                 logging.info(f"节点 {node.ip_address} 的IO分区列表:")
+                partition_list = []
                 for i, partition in enumerate(node.io_partitions):
                     if isinstance(partition, dict) and 'path' in partition:
                         logging.info(f"  分区 {i+1}: {partition['path']}")
+                        partition_list.append(partition['path'])
                     else:
                         logging.info(f"  分区 {i+1}: {partition}")
-                send_task_log(task_id, f"节点 {node.ip_address} 的IO分区: {', '.join([p['path'] if isinstance(p, dict) else p for p in node.io_partitions])}", 
-                            level='INFO', 
-                            context={'node_id': node.id, 'partitions': node.io_partitions, 'operation': 'check_partitions'})
+                        partition_list.append(str(partition))
+                partition_info = ", ".join(partition_list)
+                send_task_log(task_id, f"节点 {node.ip_address} - 检测到IO分区：{partition_info}",
+                            level='INFO',
+                            context={'node_id': node.id, 'node_ip': node.ip_address, 'partitions': partition_list, 'operation': 'detect_partitions', 'stage': '检测分区'})
             else:
                 logging.info(f"节点 {node.ip_address} 未配置IO分区")
-                send_task_log(task_id, f"节点 {node.ip_address} 未配置IO分区", 
-                            level='WARNING', 
-                            context={'node_id': node.id, 'operation': 'check_partitions'})
-            
+                send_task_log(task_id, f"节点 {node.ip_address} - 警告：未配置IO分区",
+                            level='WARNING',
+                            context={'node_id': node.id, 'node_ip': node.ip_address, 'operation': 'detect_partitions', 'stage': '检测分区'})
+
             # 第二阶段：上传工具阶段
             logging.info(f"===== 第二阶段：上传工具阶段 =====")
             logging.info(f"开始上传fio文件到节点: {login_credential.host}")
-            send_task_log(task_id, f"节点 {node.ip_address} 正在上传fio工具...", 
-                        level='INFO', 
-                        context={'node_id': node.id, 'operation': 'upload_fio'})
-            
+
             # 显示上传进度
             logging.info(f"上传进度: 0%")
+            send_task_log(task_id, f"节点 {node.ip_address} - 上传工具阶段：正在上传FIO工具（架构: {architecture}）",
+                        level='INFO',
+                        context={'node_id': node.id, 'node_ip': node.ip_address, 'architecture': architecture, 'operation': 'uploading_tool', 'stage': '上传工具阶段', 'progress': 'uploading'})
             logging.info(f"上传进度: 50%")
             upload_fio_files(ssh_client, architecture, login_credential)
             logging.info(f"上传进度: 100%")
-            
+
             logging.info(f"成功上传fio文件到节点: {login_credential.host}")
-            send_task_log(task_id, f"节点 {node.ip_address} fio工具上传完成", 
-                        level='INFO', 
-                        context={'node_id': node.id, 'operation': 'upload_fio'})
-            
+            send_task_log(task_id, f"节点 {node.ip_address} - 上传工具阶段：FIO工具上传完成",
+                        level='INFO',
+                        context={'node_id': node.id, 'node_ip': node.ip_address, 'operation': 'upload_complete', 'stage': '上传工具阶段', 'progress': 'completed'})
+
             # 3. 执行每个IO测试用例
             logging.info(f"开始执行IO测试用例，数量: {len(io_test_cases)}")
-            for io_test_case in io_test_cases:
-                case_failed, case_error = process_io_test_case(ssh_client, task_id, execution_id, node, io_test_case, app)
-                if case_failed:
-                    node_failed = True
-                    error_message = case_error
+
+            # 解析节点的分区列表
+            partitions = parse_partitions(node)
+
+            if not partitions:
+                # 如果没有配置分区，使用默认值或跳过
+                logging.warning(f"节点 {node.ip_address} 未配置分区，尝试使用测试用例中的默认配置")
+                partitions = [None]  # None表示使用测试用例默认配置
+
+            logging.info(f"节点 {node.ip_address} 共有 {len(partitions)} 个分区配置需要测试")
+            for i, partition_path in enumerate(partitions, 1):
+                if partition_path:
+                    if ',' in partition_path:
+                        logging.info(f"分区配置 {i}: {partition_path}（多设备同时测试）")
+                    else:
+                        logging.info(f"分区配置 {i}: {partition_path}")
+                else:
+                    logging.info(f"分区配置 {i}: 使用测试用例默认配置")
+
+            # 对每个分区执行所有IO测试用例
+            for partition_path in partitions:
+                for io_test_case in io_test_cases:
+                    case_failed, case_error = process_io_test_case(
+                        ssh_client, task_id, execution_id, node, io_test_case,
+                        partition_path, app
+                    )
+                    if case_failed:
+                        node_failed = True
+                        error_message = case_error
+                        break
+
+                # 如果某个分区测试失败，停止后续分区的测试
+                if node_failed:
                     break
         
         except Exception as e:

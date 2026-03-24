@@ -186,6 +186,16 @@
             </div>
           </div>
           <div v-else class="no-data">暂无节点信息</div>
+
+          <!-- 添加节点按钮 -->
+          <div class="add-button-container">
+            <el-button type="primary" icon="Plus" @click="showAddNodeDialog">
+              添加现有节点
+            </el-button>
+            <el-button type="success" icon="Plus" @click="showCreateNodeDialog">
+              创建新节点
+            </el-button>
+          </div>
         </el-collapse-item>
 
         <!-- IO任务列表 -->
@@ -226,104 +236,252 @@
               </el-table-column>
             </el-table>
           </div>
+
+          <!-- 添加IO任务按钮 -->
+          <div class="add-button-container">
+            <el-button type="primary" icon="Plus" @click="showAddIOCaseDialog">
+              添加现有IO用例
+            </el-button>
+            <el-button type="success" icon="Plus" @click="showCreateIOCaseDialog">
+              创建新IO用例
+            </el-button>
+          </div>
         </el-collapse-item>
 
-        <!-- 日志输出 -->
-        <el-collapse-item title="日志输出" name="4">
-          <div class="task-logs">
-            <!-- 日志过滤和搜索 -->
-            <div class="log-filter" style="margin-bottom: 10px">
-              <el-select
-                v-model="logFilter.level"
-                placeholder="日志级别"
-                style="width: 120px; margin-right: 10px"
-              >
-                <el-option label="全部" value="" />
-                <el-option label="DEBUG" value="DEBUG" />
-                <el-option label="INFO" value="INFO" />
-                <el-option label="WARNING" value="WARNING" />
-                <el-option label="ERROR" value="ERROR" />
-                <el-option label="CRITICAL" value="CRITICAL" />
-              </el-select>
-              <el-input
-                v-model="logFilter.keyword"
-                placeholder="搜索关键词"
-                style="width: 200px; margin-right: 10px"
-              >
-                <template #append>
-                  <el-button @click="clearLogFilter">清空</el-button>
-                </template>
-              </el-input>
-              <el-button type="primary" @click="filterLogs">过滤</el-button>
+        <!-- 任务实时运行状态 -->
+        <el-collapse-item title="任务实时运行状态" name="4">
+          <div class="task-status-display">
+            <!-- 当前运行状态 -->
+            <div class="current-status-box">
+              <div class="status-header">
+                <span class="status-icon">
+                  <el-icon v-if="taskDetail.status === 'running'" class="is-loading">
+                    <Loading />
+                  </el-icon>
+                  <el-icon v-else-if="taskDetail.status === 'completed'" color="#67C23A">
+                    <CircleCheck />
+                  </el-icon>
+                  <el-icon v-else-if="taskDetail.status === 'failed'" color="#F56C6C">
+                    <CircleClose />
+                  </el-icon>
+                  <el-icon v-else color="#909399">
+                    <Clock />
+                  </el-icon>
+                </span>
+                <span class="status-text">
+                  {{ getTaskStatusText() }}
+                </span>
+              </div>
+
+              <!-- 当前操作 -->
+              <div v-if="currentOperation" class="current-operation">
+                <div class="operation-label">当前操作：</div>
+                <div class="operation-content">{{ currentOperation }}</div>
+              </div>
+
+              <!-- 操作历史 -->
+              <div class="operation-history">
+                <div class="history-label">操作历史：</div>
+                <div class="history-list">
+                  <div
+                    v-for="(op, index) in operationHistory"
+                    :key="index"
+                    class="history-item"
+                    :class="{
+                      'is-current': index === operationHistory.length - 1,
+                      'is-error': op.level === 'ERROR',
+                      'is-warning': op.level === 'WARNING'
+                    }"
+                  >
+                    <div class="history-main">
+                      <span class="history-time">{{ formatLogTime(op.timestamp) }}</span>
+                      <span class="history-stage" v-if="op.context && op.context.stage">
+                        【{{ op.context.stage }}】
+                      </span>
+                      <span class="history-text">{{ op.message }}</span>
+                    </div>
+                    <div class="history-details" v-if="op.context">
+                      <!-- FIO命令特殊显示 -->
+                      <div v-if="op.context.fio_command" class="fio-command-block">
+                        <div class="fio-command-label">FIO命令：</div>
+                        <pre class="fio-command-code">{{ op.context.fio_command }}</pre>
+                      </div>
+
+                      <!-- 其他详细信息 -->
+                      <div v-if="!op.context.fio_command" class="detail-items">
+                        <span v-if="op.context.nodes && op.context.nodes.length > 0" class="detail-item">
+                          节点: {{ op.context.nodes.join(', ') }}
+                        </span>
+                        <span v-if="op.context.io_models && op.context.io_models.length > 0" class="detail-item">
+                          IO模型: {{ op.context.io_models.join(', ') }}
+                        </span>
+                        <span v-if="op.context.partition" class="detail-item">
+                          分区: {{ op.context.partition }}
+                        </span>
+                        <span v-if="op.context.duration" class="detail-item">
+                          耗时: {{ op.context.duration }}秒
+                        </span>
+                      </div>
+                    </div>
+                    <el-tag
+                      v-if="op.level === 'ERROR'"
+                      type="danger"
+                      size="small"
+                      effect="plain"
+                    >
+                      失败
+                    </el-tag>
+                    <el-tag
+                      v-else-if="op.level === 'WARNING'"
+                      type="warning"
+                      size="small"
+                      effect="plain"
+                    >
+                      警告
+                    </el-tag>
+                  </div>
+                  <div v-if="operationHistory.length === 0" class="no-history">
+                    暂无操作记录
+                  </div>
+                </div>
+              </div>
             </div>
-
-            <!-- 日志列表 -->
-            <el-scrollbar height="400px">
-              <div
-                v-for="log in filteredLogs"
-                :key="log.id"
-                :class="[
-                  'log-item',
-                  'log-level-' +
-                    (typeof log.level === 'string'
-                      ? log.level
-                      : 'info'
-                    ).toLowerCase(),
-                ]"
-              >
-                <div class="log-header">
-                  <span class="log-time">{{
-                    formatLogTime(log.timestamp)
-                  }}</span>
-                  <span
-                    class="log-level"
-                    :class="
-                      'log-level-' +
-                      (typeof log.level === 'string'
-                        ? log.level
-                        : 'info'
-                      ).toLowerCase()
-                    "
-                    >{{ log.level || "INFO" }}</span
-                  >
-                  <span class="log-module">{{ log.module }}</span>
-                </div>
-                <div class="log-content">{{ log.message }}</div>
-                <div
-                  v-if="
-                    log.context &&
-                    typeof log.context === 'object' &&
-                    Object.keys(log.context).length > 0
-                  "
-                  class="log-context"
-                >
-                  <el-button
-                    type="text"
-                    size="small"
-                    @click="showLogContext(log.context)"
-                    >查看上下文</el-button
-                  >
-                </div>
-              </div>
-              <div v-if="filteredLogs.length === 0" class="no-logs">
-                暂无日志
-              </div>
-            </el-scrollbar>
-
-            <el-button
-              type="primary"
-              size="small"
-              @click="loadMoreLogs"
-              style="margin-top: 10px"
-            >
-              加载更多日志
-            </el-button>
           </div>
         </el-collapse-item>
       </el-collapse>
     </el-card>
 
-    <!-- 增加对话框 -->
+    <!-- 创建新节点对话框 -->
+    <el-dialog
+      v-model="createNodeDialogVisible"
+      title="创建新节点"
+      width="600px"
+    >
+      <el-form :model="newNodeForm" label-width="120px">
+        <el-form-item label="节点名称" required>
+          <el-input v-model="newNodeForm.name" placeholder="请输入节点名称" />
+        </el-form-item>
+        <el-form-item label="IP地址" required>
+          <el-input v-model="newNodeForm.ip_address" placeholder="请输入IP地址" />
+        </el-form-item>
+        <el-form-item label="登录凭证" required>
+          <el-select v-model="newNodeForm.login_credential_id" placeholder="请选择登录凭证" style="width: 100%">
+            <el-option
+              v-for="cred in loginCredentials"
+              :key="cred.id"
+              :label="cred.alias"
+              :value="cred.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="节点描述">
+          <el-input
+            v-model="newNodeForm.description"
+            type="textarea"
+            :rows="3"
+            placeholder="请输入节点描述"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="createNodeDialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="confirmCreateNode">创建并添加</el-button>
+        </span>
+      </template>
+    </el-dialog>
+
+    <!-- 创建新IO用例对话框 -->
+    <IOCaseEditor
+      v-model="createIOCaseDialogVisible"
+      dialog-title="创建新IO用例"
+      form-title="IO用例信息"
+      :initial-data="{}"
+      @submit="handleCreateIOCase"
+    />
+
+    <!-- 添加节点对话框 -->
+    <el-dialog
+      v-model="addNodeDialogVisible"
+      title="选择要添加的节点"
+      width="700px"
+    >
+      <el-table
+        :data="availableNodes"
+        style="width: 100%"
+        @selection-change="handleNodeSelectionChange"
+      >
+        <el-table-column type="selection" width="55" />
+        <el-table-column prop="id" label="节点ID" width="80" />
+        <el-table-column prop="name" label="节点名称" />
+        <el-table-column prop="ip_address" label="IP地址" />
+        <el-table-column prop="status" label="状态" width="100">
+          <template #default="scope">
+            <el-tag
+              :type="scope.row.status === 'active' ? 'success' : 'danger'"
+            >
+              {{ scope.row.status === "active" ? "在线" : "离线" }}
+            </el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="addNodeDialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="confirmAddNodes">
+            确定添加 ({{ selectedNodesToAdd.length }})
+          </el-button>
+        </span>
+      </template>
+    </el-dialog>
+
+    <!-- 添加IO用例对话框 -->
+    <el-dialog
+      v-model="addIOCaseDialogVisible"
+      title="选择要添加的IO测试用例"
+      width="800px"
+    >
+      <el-table
+        :data="availableIOCases"
+        style="width: 100%"
+        @selection-change="handleIOCaseSelectionChange"
+      >
+        <el-table-column type="selection" width="55" />
+        <el-table-column prop="id" label="用例ID" width="80" />
+        <el-table-column prop="name" label="用例名称" />
+        <el-table-column prop="tool" label="工具" width="100" />
+        <el-table-column label="IO类型" width="150">
+          <template #default="scope">
+            <el-tag v-if="scope.row.parameters && scope.row.parameters.io_type">
+              {{ Array.isArray(scope.row.parameters.io_type)
+                  ? scope.row.parameters.io_type.join(', ')
+                  : scope.row.parameters.io_type }}
+            </el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="块大小" width="100">
+          <template #default="scope">
+            {{ scope.row.parameters?.block_size || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="队列深度" width="100">
+          <template #default="scope">
+            {{ scope.row.parameters?.queue_depth || '-' }}
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="addIOCaseDialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="confirmAddIOCases">
+            确定添加 ({{ selectedIOCasesToAdd.length }})
+          </el-button>
+        </span>
+      </template>
+    </el-dialog>
+
+    <!-- 旧的增加对话框（保留用于兼容） -->
     <el-dialog
       v-model="addDialogVisible"
       :title="addType === 'node' ? '新增节点' : '新增IO测试用例'"
@@ -485,6 +643,7 @@
 <script>
 import { ref, reactive, onMounted, onUnmounted, computed, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { Loading, CircleCheck, CircleClose, Clock } from "@element-plus/icons-vue";
 import tasksApi from "../api/tasks";
 import nodesApi from "../api/nodes";
 import ioCasesApi from "../api/ioCases";
@@ -571,9 +730,32 @@ export default {
     // 选中的IO任务
     const selectedIOTask = ref(null);
 
-    // 增加对话框
+    // 增加对话框（旧的，保留兼容）
     const addDialogVisible = ref(false);
     const addType = ref(""); // 'node' 或 'io_case'
+
+    // 添加节点对话框
+    const addNodeDialogVisible = ref(false);
+    const availableNodes = ref([]);
+    const selectedNodesToAdd = ref([]);
+
+    // 创建新节点对话框
+    const createNodeDialogVisible = ref(false);
+    const newNodeForm = ref({
+      name: '',
+      ip_address: '',
+      login_credential_id: null,
+      description: ''
+    });
+    const loginCredentials = ref([]);
+
+    // 添加IO用例对话框
+    const addIOCaseDialogVisible = ref(false);
+    const availableIOCases = ref([]);
+    const selectedIOCasesToAdd = ref([]);
+
+    // 创建新IO用例对话框
+    const createIOCaseDialogVisible = ref(false);
 
     // 编辑IO用例模型对话框
     const editIOTaskDialogVisible = ref(false);
@@ -615,39 +797,15 @@ export default {
       }
     };
 
+    // 任务实时状态
+    const currentOperation = ref(""); // 当前正在执行的操作
+    const operationHistory = ref([]); // 操作历史记录（最多保留20条）
+
     // 日志数据
     const logs = ref([]);
 
-    // 日志过滤条件
-    const logFilter = reactive({
-      level: "",
-      keyword: "",
-    });
-
-    // 过滤后的日志
-    const filteredLogs = computed(() => {
-      let result = [...logs.value];
-
-      // 按级别过滤
-      if (logFilter.level) {
-        result = result.filter((log) => log.level === logFilter.level);
-      }
-
-      // 按关键词过滤
-      if (logFilter.keyword) {
-        const keyword = logFilter.keyword.toLowerCase();
-        result = result.filter(
-          (log) =>
-            (typeof log.message === "string" &&
-              log.message.toLowerCase().includes(keyword)) ||
-            (log.context &&
-              typeof log.context === "object" &&
-              JSON.stringify(log.context).toLowerCase().includes(keyword)),
-        );
-      }
-
-      return result;
-    });
+    // 日志数据 - 直接使用，不需要过滤
+    // logs.value 已在上面定义
 
     // WebSocket相关
     const socket = ref(null);
@@ -704,47 +862,29 @@ export default {
         // 处理新的结构化日志格式
         if (data && typeof data === "object" && data.data) {
           const logData = data.data;
-          logs.value.push({
-            id: logId++,
-            timestamp: logData.timestamp || new Date().toLocaleString(),
-            level: logData.level || "INFO",
-            module: logData.module || "tasks",
+
+          // 更新当前操作状态
+          if (logData.message) {
+            currentOperation.value = logData.message;
+          }
+
+          // 添加到操作历史
+          operationHistory.value.push({
+            timestamp: logData.timestamp || new Date().toISOString(),
             message: logData.message,
+            level: logData.level || "INFO",
             context: logData.context || {},
           });
-          console.log("添加结构化日志:", logData);
-        } else {
-          // 兼容旧格式
-          let logContent = "";
-          if (data && typeof data === "object") {
-            if (data.log) {
-              logContent = data.log;
-            } else {
-              logContent = JSON.stringify(data);
-            }
-          } else if (typeof data === "string") {
-            logContent = data;
+
+          // 限制操作历史数量，避免内存占用过大（保留最近100条）
+          if (operationHistory.value.length > 100) {
+            operationHistory.value.shift();
           }
 
-          if (typeof logContent === "string") {
-            const logLines = logContent.split("\n");
-            logLines.forEach((line) => {
-              if (line.trim()) {
-                logs.value.push({
-                  id: logId++,
-                  timestamp: new Date().toLocaleString(),
-                  level: "INFO",
-                  module: "tasks",
-                  message: line.trim(),
-                  context: {},
-                });
-                console.log("添加旧格式日志:", line.trim());
-
-                // 尝试解析iostat日志
-                parseIostatLog(line.trim());
-              }
-            });
-          }
+          console.log("更新任务状态:", {
+            currentOperation: currentOperation.value,
+            historyCount: operationHistory.value.length
+          });
         }
       });
 
@@ -924,6 +1064,61 @@ export default {
       }
     };
 
+    // 加载操作历史日志
+    const loadOperationHistory = async () => {
+      try {
+        const taskId = route.params.id;
+        const response = await fetch(`/api/tasks/${taskId}/operation-logs?limit=100`);
+        const result = await response.json();
+
+        if (result.success && result.data) {
+          // 将数据库中的历史日志映射为前端格式
+          const historyLogs = result.data.map(log => ({
+            timestamp: log.timestamp,
+            message: log.message,
+            level: log.level,
+            context: log.context || {}
+          }));
+
+          // 如果当前没有操作历史（页面刚加载），直接赋值
+          if (operationHistory.value.length === 0) {
+            operationHistory.value = historyLogs;
+          } else {
+            // 如果已有操作历史（WebSocket 已接收到日志），则合并并去重
+            // 使用 timestamp + message 作为唯一标识
+            const existingKeys = new Set(
+              operationHistory.value.map(log => `${log.timestamp}_${log.message}`)
+            );
+
+            // 只添加不存在的历史日志
+            historyLogs.forEach(log => {
+              const key = `${log.timestamp}_${log.message}`;
+              if (!existingKeys.has(key)) {
+                operationHistory.value.push(log);
+                existingKeys.add(key);
+              }
+            });
+
+            // 按时间戳排序
+            operationHistory.value.sort((a, b) => {
+              return new Date(a.timestamp) - new Date(b.timestamp);
+            });
+          }
+
+          // 如果有日志，将最后一条设置为当前操作
+          if (operationHistory.value.length > 0) {
+            const lastLog = operationHistory.value[operationHistory.value.length - 1];
+            currentOperation.value = lastLog.message;
+          }
+
+          console.log(`加载了操作历史，总计 ${operationHistory.value.length} 条`);
+        }
+      } catch (error) {
+        console.error("加载操作历史失败:", error);
+        // 加载失败不影响页面其他功能
+      }
+    };
+
     // 加载相关数据
     const loadRelatedData = async () => {
       try {
@@ -945,56 +1140,35 @@ export default {
 
         // 获取IO任务数据
         try {
-          // 获取所有IO测试用例
-          const ioCasesResponse = await ioCasesApi.getIOCases();
-
-          // 确保获取到正确的数据结构
-          let allIOCases = [];
-          if (ioCasesResponse && ioCasesResponse.data) {
-            allIOCases = Array.isArray(ioCasesResponse.data)
-              ? ioCasesResponse.data
-              : [];
-          }
-
-          console.log("获取到的所有IO测试用例:", allIOCases);
-          console.log("任务详情:", taskDetail);
-          console.log(
-            "任务详情中的IO测试用例:",
-            taskDetail.io_test_cases,
-          );
-
-          // 从任务详情中获取与当前任务相关的IO测试用例
-          // 优先使用 io_test_cases 对象数组，如果没有则使用 io_test_case_ids
+          // 直接从任务详情中获取IO测试用例，不再获取所有用例
           let taskIOCases = [];
+
           if (
             taskDetail &&
             taskDetail.io_test_cases &&
             Array.isArray(taskDetail.io_test_cases) &&
             taskDetail.io_test_cases.length > 0
           ) {
-            // 直接使用返回的IO测试用例对象
+            // 直接使用后端返回的IO测试用例对象（最优方案）
             taskIOCases = taskDetail.io_test_cases;
             console.log("使用taskDetail.io_test_cases:", taskIOCases);
           } else if (
             taskDetail &&
             taskDetail.io_test_case_ids &&
-            Array.isArray(taskDetail.io_test_case_ids)
+            Array.isArray(taskDetail.io_test_case_ids) &&
+            taskDetail.io_test_case_ids.length > 0
           ) {
-            // 使用ID列表匹配
-            const taskIOCaseIds = taskDetail.io_test_case_ids;
-            console.log("任务关联的IO测试用例ID:", taskIOCaseIds);
+            // 如果只有ID列表，需要单独获取每个IO用例的详情
+            console.log("任务关联的IO测试用例ID:", taskDetail.io_test_case_ids);
+            console.warn("后端应该直接返回 io_test_cases 对象数组，而不是只返回ID列表");
 
-            // 只获取当前任务关联的IO测试用例
-            for (const ioCaseId of taskIOCaseIds) {
-              const matchedCase = allIOCases.find(
-                (ioCase) => ioCase.id === ioCaseId,
-              );
-              if (matchedCase) {
-                taskIOCases.push(matchedCase);
-              } else {
-                console.warn(`未找到ID为${ioCaseId}的IO测试用例`);
-              }
-            }
+            // 这里可以调用单个IO用例的API，而不是获取所有用例
+            // 暂时创建简单的占位对象
+            taskIOCases = taskDetail.io_test_case_ids.map((id) => ({
+              id: id,
+              name: `IO测试用例 ${id}`,
+              parameters: {},
+            }));
           }
 
           console.log("任务关联的IO测试用例:", taskIOCases);
@@ -1268,6 +1442,238 @@ export default {
     const showAddDialog = (type) => {
       addType.value = type || "node"; // 默认增加节点
       addDialogVisible.value = true;
+    };
+
+    // 显示添加节点对话框
+    const showAddNodeDialog = async () => {
+      try {
+        // 获取所有节点列表
+        const response = await nodesApi.getNodes();
+        const allNodes = response.data || [];
+
+        // 过滤掉已添加的节点
+        const currentNodeIds = taskNodes.value.map(n => n.id);
+        availableNodes.value = allNodes.filter(node => !currentNodeIds.includes(node.id));
+
+        addNodeDialogVisible.value = true;
+      } catch (error) {
+        ElMessage.error("获取节点列表失败: " + error.message);
+      }
+    };
+
+    // 显示创建新节点对话框
+    const showCreateNodeDialog = async () => {
+      try {
+        // 获取登录凭证列表 - 使用 request 以包含认证
+        const response = await fetch('/api/login-credentials', {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${localStorage.getItem('token')}`
+          }
+        });
+        const result = await response.json();
+        if (result.success) {
+          loginCredentials.value = result.data || [];
+        } else {
+          console.error('获取登录凭证失败:', result.message);
+          loginCredentials.value = [];
+        }
+
+        // 重置表单
+        newNodeForm.value = {
+          name: '',
+          ip_address: '',
+          login_credential_id: null,
+          description: ''
+        };
+
+        createNodeDialogVisible.value = true;
+      } catch (error) {
+        console.error('获取登录凭证异常:', error);
+        ElMessage.error("获取登录凭证失败: " + error.message);
+        // 即使获取失败也打开对话框，允许用户手动输入
+        newNodeForm.value = {
+          name: '',
+          ip_address: '',
+          login_credential_id: null,
+          description: ''
+        };
+        createNodeDialogVisible.value = true;
+      }
+    };
+
+    // 确认创建新节点
+    const confirmCreateNode = async () => {
+      if (!newNodeForm.value.name || !newNodeForm.value.ip_address || !newNodeForm.value.login_credential_id) {
+        ElMessage.warning("请填写完整的节点信息");
+        return;
+      }
+
+      try {
+        // 创建新节点
+        const createResponse = await nodesApi.createNode(newNodeForm.value);
+        const newNode = createResponse.data;
+
+        // 将新节点添加到任务
+        const currentNodeIds = taskNodes.value.map(n => n.id);
+        const updatedNodeIds = [...currentNodeIds, newNode.id];
+
+        await tasksApi.updateTask(taskId.value, {
+          node_ids: updatedNodeIds
+        });
+
+        // 更新本地节点列表
+        taskNodes.value.push(newNode);
+
+        ElMessage.success("节点创建并添加成功");
+        createNodeDialogVisible.value = false;
+
+        // 刷新任务详情
+        await getTaskDetail();
+      } catch (error) {
+        ElMessage.error("创建节点失败: " + error.message);
+      }
+    };
+
+    // 显示添加IO用例对话框
+    const showAddIOCaseDialog = async () => {
+      try {
+        // 获取所有IO用例列表
+        const response = await ioCasesApi.getIOCases();
+        const allIOCases = response.data || [];
+
+        // 过滤掉已添加的IO用例
+        const currentIOCaseIds = ioTasks.value.map(t => t.id);
+        availableIOCases.value = allIOCases.filter(ioCase => !currentIOCaseIds.includes(ioCase.id));
+
+        addIOCaseDialogVisible.value = true;
+      } catch (error) {
+        ElMessage.error("获取IO用例列表失败: " + error.message);
+      }
+    };
+
+    // 显示创建新IO用例对话框
+    const showCreateIOCaseDialog = () => {
+      createIOCaseDialogVisible.value = true;
+    };
+
+    // 处理创建新IO用例
+    const handleCreateIOCase = async (ioCaseData) => {
+      try {
+        // 创建新IO用例
+        const createResponse = await ioCasesApi.createIOCase(ioCaseData);
+        const newIOCase = createResponse.data;
+
+        // 将新IO用例添加到任务
+        const currentIOCaseIds = ioTasks.value.map(t => t.id);
+        const updatedIOCaseIds = [...currentIOCaseIds, newIOCase.id];
+
+        await tasksApi.updateTask(taskId.value, {
+          io_test_case_ids: updatedIOCaseIds
+        });
+
+        // 更新本地IO任务列表
+        const newIOTask = {
+          id: newIOCase.id,
+          name: newIOCase.name,
+          type: newIOCase.parameters?.io_type || 'read',
+          status: 'pending',
+          progress: 0,
+          io_cases: [newIOCase]
+        };
+        ioTasks.value.push(newIOTask);
+
+        ElMessage.success("IO用例创建并添加成功");
+        createIOCaseDialogVisible.value = false;
+
+        // 刷新任务详情
+        await getTaskDetail();
+      } catch (error) {
+        ElMessage.error("创建IO用例失败: " + error.message);
+      }
+    };
+
+    // 处理节点选择变化
+    const handleNodeSelectionChange = (selection) => {
+      selectedNodesToAdd.value = selection;
+    };
+
+    // 处理IO用例选择变化
+    const handleIOCaseSelectionChange = (selection) => {
+      selectedIOCasesToAdd.value = selection;
+    };
+
+    // 确认添加节点
+    const confirmAddNodes = async () => {
+      if (selectedNodesToAdd.value.length === 0) {
+        ElMessage.warning("请至少选择一个节点");
+        return;
+      }
+
+      try {
+        // 获取当前任务的节点ID列表
+        const currentNodeIds = taskNodes.value.map(n => n.id);
+        const newNodeIds = selectedNodesToAdd.value.map(n => n.id);
+        const updatedNodeIds = [...currentNodeIds, ...newNodeIds];
+
+        // 调用API更新任务的节点关联
+        await tasksApi.updateTask(taskId.value, {
+          node_ids: updatedNodeIds
+        });
+
+        // 更新本地节点列表
+        taskNodes.value.push(...selectedNodesToAdd.value);
+
+        ElMessage.success(`成功添加 ${selectedNodesToAdd.value.length} 个节点`);
+        addNodeDialogVisible.value = false;
+        selectedNodesToAdd.value = [];
+
+        // 刷新任务详情
+        await getTaskDetail();
+      } catch (error) {
+        ElMessage.error("添加节点失败: " + error.message);
+      }
+    };
+
+    // 确认添加IO用例
+    const confirmAddIOCases = async () => {
+      if (selectedIOCasesToAdd.value.length === 0) {
+        ElMessage.warning("请至少选择一个IO用例");
+        return;
+      }
+
+      try {
+        // 获取当前任务的IO用例ID列表
+        const currentIOCaseIds = ioTasks.value.map(t => t.id);
+        const newIOCaseIds = selectedIOCasesToAdd.value.map(c => c.id);
+        const updatedIOCaseIds = [...currentIOCaseIds, ...newIOCaseIds];
+
+        // 调用API更新任务的IO用例关联
+        await tasksApi.updateTask(taskId.value, {
+          io_test_case_ids: updatedIOCaseIds
+        });
+
+        // 更新本地IO任务列表
+        const newIOTasks = selectedIOCasesToAdd.value.map(ioCase => ({
+          id: ioCase.id,
+          name: ioCase.name,
+          type: ioCase.parameters?.io_type || 'read',
+          status: 'pending',
+          progress: 0,
+          io_cases: [ioCase]
+        }));
+        ioTasks.value.push(...newIOTasks);
+
+        ElMessage.success(`成功添加 ${selectedIOCasesToAdd.value.length} 个IO用例`);
+        addIOCaseDialogVisible.value = false;
+        selectedIOCasesToAdd.value = [];
+
+        // 刷新任务详情
+        await getTaskDetail();
+      } catch (error) {
+        ElMessage.error("添加IO用例失败: " + error.message);
+      }
     };
 
     // 选中节点
@@ -1604,9 +2010,11 @@ export default {
     });
 
     // 初始化
-    onMounted(() => {
+    onMounted(async () => {
       if (taskId.value) {
-        getTaskDetail();
+        await getTaskDetail();
+        // 加载操作历史（从数据库加载持久化的日志）
+        await loadOperationHistory();
       }
     });
 
@@ -1622,19 +2030,20 @@ export default {
       router.push({ name: "IOStatChart", params: { id: taskId.value } });
     };
 
-    // 日志过滤方法
-    const filterLogs = () => {
-      // 过滤逻辑已经在computed属性中实现
-      console.log("过滤日志:", logFilter);
-    };
-
-    // 清空日志过滤条件
-    const clearLogFilter = () => {
-      logFilter.level = "";
-      logFilter.keyword = "";
-    };
-
     // 格式化日志时间
+    // 获取任务状态文本
+    const getTaskStatusText = () => {
+      const statusMap = {
+        'pending': '等待中',
+        'running': '正在运行',
+        'completed': '已完成',
+        'failed': '执行失败',
+        'cancelled': '已取消',
+        'paused': '已暂停'
+      };
+      return statusMap[taskDetail.status] || '未知状态';
+    };
+
     const formatLogTime = (timestamp) => {
       if (!timestamp) return "";
       const date = new Date(timestamp);
@@ -1660,8 +2069,8 @@ export default {
       taskNodes,
       ioTasks,
       logs,
-      logFilter,
-      filteredLogs,
+      currentOperation,
+      operationHistory,
       activeNames,
       scheduledTime,
       editIpDialogVisible,
@@ -1673,8 +2082,20 @@ export default {
       selectedNode,
       selectedIOTask,
       selectedIOCase,
+      // 新增对话框相关
+      addNodeDialogVisible,
+      availableNodes,
+      selectedNodesToAdd,
+      createNodeDialogVisible,
+      newNodeForm,
+      loginCredentials,
+      addIOCaseDialogVisible,
+      availableIOCases,
+      selectedIOCasesToAdd,
+      createIOCaseDialogVisible,
       getStatusType,
       getStatusText,
+      getTaskStatusText,
       getPriorityType,
       getPriorityText,
       loadMoreLogs,
@@ -1690,6 +2111,17 @@ export default {
       pauseTask,
       deleteTask,
       showAddDialog,
+      // 新增函数
+      showAddNodeDialog,
+      showCreateNodeDialog,
+      confirmCreateNode,
+      showAddIOCaseDialog,
+      showCreateIOCaseDialog,
+      handleCreateIOCase,
+      handleNodeSelectionChange,
+      handleIOCaseSelectionChange,
+      confirmAddNodes,
+      confirmAddIOCases,
       selectNode,
       selectIOTask,
       selectIOCase,
@@ -1709,8 +2141,6 @@ export default {
       // 跳转到IOSTAT性能图表
       navigateToIOStatChart,
       // 日志相关方法
-      filterLogs,
-      clearLogFilter,
       formatLogTime,
       showLogContext,
       // iostat指标数据
@@ -1719,6 +2149,11 @@ export default {
       parseIostatLog,
       // 处理iostat数据函数
       processIostatData,
+      // 图标组件
+      Loading,
+      CircleCheck,
+      CircleClose,
+      Clock,
     };
   },
 };
@@ -1810,6 +2245,215 @@ export default {
   padding: 20px;
 }
 
+/* 任务状态显示样式 */
+.task-status-display {
+  padding: 15px;
+}
+
+.current-status-box {
+  background-color: #f9f9f9;
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.status-header {
+  display: flex;
+  align-items: center;
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 2px solid #e8e8e8;
+}
+
+.status-icon {
+  margin-right: 12px;
+  font-size: 24px;
+  display: flex;
+  align-items: center;
+}
+
+.status-icon .is-loading {
+  color: #409eff;
+  animation: rotate 1s linear infinite;
+}
+
+@keyframes rotate {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.status-text {
+  font-size: 18px;
+  color: #303133;
+}
+
+.current-operation {
+  margin-bottom: 25px;
+  padding: 15px;
+  background-color: #ffffff;
+  border-radius: 6px;
+  border-left: 4px solid #409eff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.operation-label {
+  font-weight: 600;
+  font-size: 14px;
+  color: #606266;
+  margin-bottom: 8px;
+}
+
+.operation-content {
+  font-size: 16px;
+  color: #303133;
+  line-height: 1.6;
+}
+
+.operation-history {
+  margin-top: 20px;
+}
+
+.history-label {
+  font-weight: 600;
+  font-size: 14px;
+  color: #606266;
+  margin-bottom: 10px;
+}
+
+.history-list {
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 10px;
+  background-color: #ffffff;
+  border-radius: 6px;
+  border: 1px solid #e8e8e8;
+}
+
+.history-item {
+  padding: 12px;
+  margin-bottom: 8px;
+  background-color: #fafafa;
+  border-radius: 4px;
+  border-left: 3px solid #d9d9d9;
+  display: flex;
+  flex-direction: column;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.history-item.is-error {
+  border-left-color: #f56c6c;
+  background-color: #fef0f0;
+}
+
+.history-item.is-warning {
+  border-left-color: #e6a23c;
+  background-color: #fdf6ec;
+}
+
+.history-item.is-current {
+  border-left-color: #409eff;
+  background-color: #ecf5ff;
+  font-weight: 500;
+}
+
+.history-item:hover {
+  background-color: #f0f0f0;
+  transform: translateX(2px);
+}
+
+.history-item:last-child {
+  margin-bottom: 0;
+}
+
+.history-main {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.history-time {
+  color: #909399;
+  margin-right: 12px;
+  font-size: 12px;
+  white-space: nowrap;
+  min-width: 80px;
+}
+
+.history-stage {
+  color: #409eff;
+  font-weight: 600;
+  margin-right: 8px;
+  font-size: 12px;
+}
+
+.history-text {
+  flex: 1;
+  color: #303133;
+  line-height: 1.4;
+}
+
+.history-details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  margin-left: 92px;
+  font-size: 12px;
+  color: #606266;
+}
+
+.detail-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.detail-item {
+  padding: 2px 8px;
+  background-color: #f4f4f5;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.fio-command-block {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.fio-command-label {
+  font-size: 12px;
+  color: #606266;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.fio-command-code {
+  background-color: #2d2d2d;
+  color: #f8f8f2;
+  padding: 12px;
+  border-radius: 4px;
+  font-family: 'Courier New', Consolas, Monaco, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  margin: 0;
+  border-left: 3px solid #409eff;
+}
+
+.no-history {
+  text-align: center;
+  color: #999;
+  padding: 20px;
+}
+
 .log-filter {
   display: flex;
   align-items: center;
@@ -1888,6 +2532,45 @@ export default {
   padding: 10px;
   border: 1px solid #ebeef5;
   border-radius: 4px;
+}
+
+/* 添加按钮容器样式 */
+.add-button-container {
+  margin-top: 16px;
+  padding: 16px 12px;
+  background: linear-gradient(135deg, #f5f7fa 0%, #fafbfc 100%);
+  border-radius: 8px;
+  text-align: center;
+  border: 2px dashed #d9dde3;
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  align-items: center;
+  transition: all 0.3s ease;
+}
+
+.add-button-container:hover {
+  border-color: #409eff;
+  background: linear-gradient(135deg, #ecf5ff 0%, #f0f7ff 100%);
+  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.15);
+}
+
+.add-button-container .el-button {
+  font-weight: 500;
+  min-width: 140px;
+  transition: all 0.3s ease;
+}
+
+.add-button-container .el-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.no-data {
+  padding: 20px;
+  text-align: center;
+  color: #909399;
+  font-size: 14px;
 }
 
 .node-info {

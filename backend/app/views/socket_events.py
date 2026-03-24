@@ -5,7 +5,8 @@ import logging
 from datetime import datetime
 from flask import request
 from flask_socketio import emit, join_room, leave_room
-from app.models import TaskExecution, TestTask
+from app.models import TaskExecution, TestTask, db
+from app.models.task_operation_log import TaskOperationLog
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -102,17 +103,18 @@ def register_socket_events(socketio):
             logger.error('离开任务房间失败: %s', str(e))
             emit('error', {'message': f'离开房间失败: {str(e)}'})
 
-def send_task_log(task_id, log_content, level='INFO', module='tasks', context=None):
-    """向指定任务的所有客户端发送日志"""
+def send_task_log(task_id, log_content, level='INFO', module='tasks', context=None, execution_id=None):
+    """向指定任务的所有客户端发送日志，并保存到数据库"""
     """
-    发送任务日志到WebSocket客户端
-    
+    发送任务日志到WebSocket客户端并持久化到数据库
+
     Args:
         task_id: 任务ID
         log_content: 日志内容
         level: 日志级别
         module: 模块名称
         context: 上下文信息
+        execution_id: 执行ID（可选）
     """
     try:
         room = str(task_id)
@@ -124,12 +126,36 @@ def send_task_log(task_id, log_content, level='INFO', module='tasks', context=No
             'message': log_content,
             'context': context or {'task_id': task_id}
         }
-        
+
+        # 添加调试日志
+        logger.info(f'准备发送日志到任务 {task_id}: message={log_content[:50]}..., global_socketio={global_socketio is not None}')
+
         # 发送日志到房间内所有客户端
         if global_socketio:
             global_socketio.emit('task_log', {'data': log_data}, room=room)
             logger.info('已发送日志到任务 %s 的房间', task_id, extra={'context': {'task_id': task_id, 'log_level': level}})
         else:
             logger.warning('全局socketio对象未初始化，无法发送日志', extra={'context': {'task_id': task_id}})
+
+        # 保存日志到数据库（在单独的try块中，避免数据库错误影响WebSocket发送）
+        try:
+            operation_log = TaskOperationLog.create_log(
+                task_id=task_id,
+                message=log_content,
+                level=level,
+                context=context,
+                execution_id=execution_id
+            )
+            db.session.add(operation_log)
+            db.session.commit()
+            logger.debug(f'任务日志已保存到数据库: task_id={task_id}, log_id={operation_log.id}')
+        except Exception as db_error:
+            logger.error(f'保存任务日志到数据库失败: {db_error}', extra={'context': {'task_id': task_id}})
+            # 数据库保存失败不影响WebSocket发送
+            try:
+                db.session.rollback()
+            except:
+                pass
+
     except Exception as e:
         logger.error('发送任务日志失败: %s', str(e), extra={'context': {'task_id': task_id}})
