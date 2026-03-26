@@ -22,47 +22,20 @@ const routes = [
     path: "/",
     name: "Layout",
     component: () => import("@/views/Layout.vue"),
-    redirect: "/dashboard",
+    redirect: "/tasks",
     meta: { requiresAuth: true },
     children: [
-      {
-        path: "/dashboard",
-        name: "Dashboard",
-        component: () => import("@/views/Dashboard.vue"),
-        meta: { title: "仪表盘", icon: "Odometer" },
-      },
       {
         path: "/tasks",
         name: "Tasks",
         component: () => import("@/views/Tasks.vue"),
-        redirect: "/tasks/io-task-management",
         meta: { title: "任务管理", icon: "List" },
-        children: [
-          {
-            path: "/tasks/io-task-management",
-            name: "IOTaskManagement",
-            component: () => import("@/views/Tasks.vue"),
-            meta: { title: "IO任务管理", icon: "List" },
-          },
-          {
-            path: "/tasks/script-task-management",
-            name: "ScriptTaskManagement",
-            component: () => import("@/views/Tasks.vue"),
-            meta: { title: "脚本任务管理", icon: "List" },
-          },
-        ],
       },
       {
         path: "/tasks/:id",
         name: "TaskDetail",
         component: () => import("@/views/TaskDetail.vue"),
         meta: { title: "任务详情", icon: "List", hidden: true },
-      },
-      {
-        path: "/task-detail-test",
-        name: "TaskDetailTest",
-        component: () => import("@/views/TaskDetailTest.vue"),
-        meta: { title: "任务详情测试", icon: "List", hidden: true },
       },
       {
         path: "/tasks/:id/jitter-chart",
@@ -77,25 +50,22 @@ const routes = [
         meta: { title: "IOSTAT性能图表", icon: "List", hidden: true },
       },
       {
+        path: "/tasks/comparison",
+        name: "TaskComparison",
+        component: () => import("@/views/TaskComparison.vue"),
+        meta: { title: "任务性能对比", icon: "TrendCharts" },
+      },
+      {
         path: "/task-space",
         name: "TaskSpace",
         component: () => import("@/views/TaskSpace.vue"),
-        redirect: "/task-space/manage",
         meta: { title: "任务空间", icon: "Folder" },
-        children: [
-          {
-            path: "/task-space/manage",
-            name: "TaskSpaceManage",
-            component: () => import("@/views/TaskSpace.vue"),
-            meta: { title: "任务空间管理", icon: "Folder" },
-          },
-          {
-            path: "/task-space/:id",
-            name: "TaskSpaceDetail",
-            component: () => import("@/views/TaskSpaceDetail.vue"),
-            meta: { title: "任务空间详情", icon: "Folder", hidden: true },
-          },
-        ],
+      },
+      {
+        path: "/task-space/:id",
+        name: "TaskSpaceDetail",
+        component: () => import("@/views/TaskSpaceDetail.vue"),
+        meta: { title: "任务空间详情", icon: "Folder", hidden: true },
       },
       {
         path: "/nodes",
@@ -107,55 +77,19 @@ const routes = [
         path: "/login-credentials",
         name: "LoginCredentials",
         component: () => import("@/views/LoginCredentials.vue"),
-        redirect: "/login-credentials/manage",
-        meta: { title: "登录凭证", icon: "KeyFilled" },
-        children: [
-          {
-            path: "/login-credentials/manage",
-            name: "LoginCredentialsManage",
-            component: () => import("@/views/LoginCredentials.vue"),
-            meta: { title: "登录凭证管理", icon: "KeyFilled" },
-          },
-        ],
+        meta: { title: "登录凭证", icon: "Key" },
       },
       {
         path: "/io-cases",
         name: "IOCases",
         component: () => import("@/views/IOCases.vue"),
-        redirect: "/io-cases/manage",
         meta: { title: "IO用例", icon: "Document" },
-        children: [
-          {
-            path: "/io-cases/manage",
-            name: "IOCasesManage",
-            component: () => import("@/views/IOCases.vue"),
-            meta: { title: "IO用例管理", icon: "Document" },
-          },
-        ],
-      },
-      {
-        path: "/results",
-        name: "Results",
-        component: () => import("@/views/Results.vue"),
-        meta: { title: "测试结果", icon: "DataAnalysis" },
-      },
-      {
-        path: "/logs",
-        name: "LogVisualization",
-        component: () => import("@/views/LogVisualization.vue"),
-        meta: { title: "日志可视化", icon: "DataLine" },
       },
       {
         path: "/users",
         name: "Users",
         component: () => import("@/views/Users.vue"),
         meta: { title: "用户管理", icon: "User", adminOnly: true },
-      },
-      {
-        path: "/settings",
-        name: "Settings",
-        component: () => import("@/views/Settings.vue"),
-        meta: { title: "系统设置", icon: "Setting" },
       },
     ],
   },

@@ -24,7 +24,28 @@
       "Bash(cd:*)",
       "Bash(ls -la \"D:/delvelop_project/ai_project/diskbench_pro2/diskbench_pro2/frontend/src/views/IOJitterChart.vue\"*)",
       "Bash(node -e \"const fs = require\\(''fs''\\); const content = fs.readFileSync\\(''src/views/IOJitterChart.vue'', ''utf8''\\); console.log\\(''File can be parsed''\\);\")",
-      "Bash(grep -n \"write_lat_log\\\\|lat_log\" app/utils/*.py)"
+      "Bash(grep -n \"write_lat_log\\\\|lat_log\" app/utils/*.py)",
+      "Bash(grep \"rw=\\\\[''''read'''', ''''write''''\\\\]\" app.log)",
+      "Bash(grep -a \"rw=\\\\[''''read'''', ''''write''''\\\\]\" app.log)",
+      "Bash(grep -r \"login-credentials\" app/views/*.py)",
+      "Bash(xargs ls:*)",
+      "Bash(tasklist)",
+      "Bash(ls -la Layout*)",
+      "Bash(xargs grep:*)",
+      "Bash(tasklist //FI \"IMAGENAME eq python.exe\" //FO CSV)",
+      "Bash(tasklist //FI \"IMAGENAME eq python.exe\" //FO LIST)",
+      "Bash(ls -lh D:/delvelop_project/ai_project/diskbench_pro2/diskbench_pro2/backend/static/js/app.*.js)",
+      "Bash(find D:/delvelop_project/ai_project/diskbench_pro2/diskbench_pro2/frontend/src -name *IOCase* -o -name *io-case* -o -name *ioCases*)",
+      "Bash(cp -r frontend/dist/* backend/static/)",
+      "Bash(ls -lh backend/static/js/app.*.js)",
+      "Bash(mysql -u root -p123456 io_platform -e \"SELECT id, name, partition_mode FROM io_test_cases ORDER BY id DESC LIMIT 3\")",
+      "Bash(ls -lht D:/delvelop_project/ai_project/diskbench_pro2/diskbench_pro2/backend/static/js/app.*.js)",
+      "Bash(ls -lht backend/static/js/app.*.js)",
+      "Bash(npx eslint:*)",
+      "Bash(node -e \":*)",
+      "Bash(dos2unix D:/delvelop_project/ai_project/diskbench_pro2/diskbench_pro2/frontend/src/views/TaskComparison.vue)",
+      "Bash(iconv:*)",
+      "Bash(grep:*)"
     ]
   }
 }

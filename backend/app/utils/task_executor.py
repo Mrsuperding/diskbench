@@ -84,19 +84,19 @@ def upload_fio_files(ssh_client, architecture, login_credential):
         logging.error(f"上传fio文件失败: {e}")
         return False
 
-def generate_io_model_name(io_type, blocksize, iodepth, numjobs):
-    """生成与前端一致的 IO 模型名称
-    
-    格式：{blocksize}_{iodepth}d_{io_type}_{numjobs}n
-    例如：4k_16d_randread_1n
+def generate_io_model_name(io_type, blocksize, iodepth, numjobs, node_count=1, vol_count=1):
+    """生成IO模型名称
+
+    格式：{节点数}VM_{分区数}VOL_{块大小}_{读写模式}_{队列深度}d_{线程数}n
+    例如：1VM_3VOL_4k_randread_128d_1n
     """
     # 确保 blocksize 有单位
     if isinstance(blocksize, str) and blocksize.isdigit():
         blocksize = f"{blocksize}k"
     elif isinstance(blocksize, (int, float)):
         blocksize = f"{blocksize}k"
-    
-    return f"{blocksize}_{iodepth}d_{io_type}_{numjobs}n"
+
+    return f"{node_count}VM_{vol_count}VOL_{blocksize}_{io_type}_{iodepth}d_{numjobs}n"
 
 def parse_partitions(node):
     """解析节点的分区配置
@@ -125,7 +125,7 @@ def parse_partitions(node):
 
     return partitions
 
-def process_io_test_case(ssh_client, task_id, execution_id, node, io_test_case, partition_path, app):
+def process_io_test_case(ssh_client, task_id, execution_id, node, io_test_case, partition_path, app, execution_mode='restart'):
     """处理单个 IO 测试用例在指定分区上的执行
 
     Args:
@@ -136,6 +136,7 @@ def process_io_test_case(ssh_client, task_id, execution_id, node, io_test_case, 
         io_test_case: IO测试用例对象
         partition_path: 分区路径（可能包含逗号分隔的多个路径）
         app: Flask应用对象
+        execution_mode: 执行模式，restart（重新运行）或resume（继续执行）
     """
     from app.models.test_task import TestTask
     from app.models import db
@@ -180,6 +181,22 @@ def process_io_test_case(ssh_client, task_id, execution_id, node, io_test_case, 
                     level='INFO',
                     context={'node_id': node.id, 'node_ip': node.ip_address, 'io_test_case_id': io_test_case.id,
                             'io_model': io_test_case.name, 'partition': partition_display, 'operation': 'execute_io_model', 'stage': '执行IO模型', 'progress': 'start'})
+
+        # resume模式：检查是否已有该节点+用例的测试结果
+        if execution_mode == 'resume':
+            existing_result = db.session.query(TestResult).filter_by(
+                test_task_id=task_id,
+                node_id=node.id,
+                io_test_case_id=io_test_case.id
+            ).first()
+
+            if existing_result:
+                logging.info(f"resume模式：跳过已完成的测试 - 节点:{node.id}, 用例:{io_test_case.id}")
+                send_task_log(task_id, f"节点 {node.ip_address} - 跳过已完成的IO模型：{io_test_case.name}",
+                            level='INFO',
+                            context={'node_id': node.id, 'node_ip': node.ip_address, 'io_test_case_id': io_test_case.id,
+                                    'io_model': io_test_case.name, 'operation': 'skip_completed', 'stage': '跳过已完成'})
+                return False, ""  # 不是失败，直接跳过
 
         # 执行IO测试
         logging.info(f"运行IO测试: {io_test_case.name}")
@@ -294,7 +311,13 @@ def process_io_test_case(ssh_client, task_id, execution_id, node, io_test_case, 
                         numjobs = combo_params.get('numjobs', '1')
                         
                         # 构建 IO 模型名称，与前端格式一致
-                        io_model_name = generate_io_model_name(io_type, blocksize, iodepth, numjobs)
+                        # 计算分区数量：如果partition_path包含逗号，则为逗号分隔的数量，否则为1
+                        if partition_path and ',' in partition_path:
+                            vol_count = len([p for p in partition_path.split(',') if p.strip()])
+                        else:
+                            vol_count = 1
+
+                        io_model_name = generate_io_model_name(io_type, blocksize, iodepth, numjobs, node_count=1, vol_count=vol_count)
                         
                         # 解析fio输出获取性能指标
                         raw_output = combo_result.get('raw_output', '')
@@ -431,7 +454,13 @@ def process_io_test_case(ssh_client, task_id, execution_id, node, io_test_case, 
                 blocksize = fio_params.get('block_size', '4k')
                 iodepth = fio_params.get('queue_depth', '16')
                 numjobs = fio_params.get('numjobs', '1')
-                
+
+                # 计算分区数量：如果partition_path包含逗号，则为逗号分隔的数量，否则为1
+                if partition_path and ',' in partition_path:
+                    vol_count = len([p for p in partition_path.split(',') if p.strip()])
+                else:
+                    vol_count = 1
+
                 performance_data = IOPerformanceData(
                     test_task_id=task_id,
                     node_id=node.id,
@@ -446,7 +475,7 @@ def process_io_test_case(ssh_client, task_id, execution_id, node, io_test_case, 
                     util=0,  # FIO 日志中可能没有这个字段，使用默认值
                     lat_p99=(float(read_metrics.get('lat_p99', 0)) + float(write_metrics.get('lat_p99', 0))) / 2,  # 平均 p99 延迟
                     lat_max=max(float(read_metrics.get('lat_max', 0)), float(write_metrics.get('lat_max', 0))),  # 最大延迟
-                    io_model_name=generate_io_model_name(io_type, blocksize, iodepth, numjobs),
+                    io_model_name=generate_io_model_name(io_type, blocksize, iodepth, numjobs, node_count=1, vol_count=vol_count),
                     device=device,
                     io_start_time=start_time,
                     io_end_time=end_time,
@@ -576,8 +605,17 @@ EOF'''
 # 导入装饰器
 from app.utils.decorators import with_app_context
 
-def execute_node_task(node, task_id, execution_id, io_test_cases, app):
-    """执行节点任务"""
+def execute_node_task(node, task_id, execution_id, io_test_cases, app, execution_mode='restart'):
+    """执行节点任务
+
+    Args:
+        node: 节点对象
+        task_id: 任务ID
+        execution_id: 执行记录ID
+        io_test_cases: IO测试用例列表
+        app: Flask应用实例
+        execution_mode: 执行模式，restart（重新运行）或resume（继续执行）
+    """
     # 使用应用上下文装饰器
     @with_app_context(app)
     def execute_node():
@@ -691,21 +729,47 @@ def execute_node_task(node, task_id, execution_id, io_test_cases, app):
                 else:
                     logging.info(f"分区配置 {i}: 使用测试用例默认配置")
 
-            # 对每个分区执行所有IO测试用例
-            for partition_path in partitions:
-                for io_test_case in io_test_cases:
+            # 执行所有IO测试用例
+            for io_test_case in io_test_cases:
+                # 获取IO用例的分区执行模式
+                partition_mode = getattr(io_test_case, 'partition_mode', 'concurrent')
+
+                if partition_mode == 'concurrent':
+                    # 并发模式：将所有分区路径合并，执行一次FIO命令
+                    logging.info(f"IO用例 {io_test_case.name} - 并发模式：同时对所有分区执行测试")
+
+                    # 合并所有分区路径（用逗号分隔）
+                    if partitions and partitions[0] is not None:
+                        combined_partitions = ','.join([p for p in partitions if p])
+                        logging.info(f"合并分区路径: {combined_partitions}")
+                    else:
+                        combined_partitions = None
+
                     case_failed, case_error = process_io_test_case(
                         ssh_client, task_id, execution_id, node, io_test_case,
-                        partition_path, app
+                        combined_partitions, app, execution_mode
                     )
                     if case_failed:
                         node_failed = True
                         error_message = case_error
                         break
+                else:
+                    # 串行模式（sequential）：依次对每个分区执行测试
+                    logging.info(f"IO用例 {io_test_case.name} - 串行模式：依次对每个分区执行测试")
 
-                # 如果某个分区测试失败，停止后续分区的测试
-                if node_failed:
-                    break
+                    for partition_path in partitions:
+                        case_failed, case_error = process_io_test_case(
+                            ssh_client, task_id, execution_id, node, io_test_case,
+                            partition_path, app, execution_mode
+                        )
+                        if case_failed:
+                            node_failed = True
+                            error_message = case_error
+                            break
+
+                    # 如果某个分区测试失败，停止该用例的后续分区测试
+                    if node_failed:
+                        break
         
         except Exception as e:
             logging.error(f"执行节点任务时发生异常: {e}", exc_info=True)

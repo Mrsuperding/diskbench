@@ -106,7 +106,7 @@ import { ref, reactive, onMounted, computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { getTaskSpace } from "@/api/taskSpaces";
-import { deleteTask } from "@/api/tasks";
+import tasksApi from "@/api/tasks";
 import { ArrowLeft, Search, Edit, Delete } from "@element-plus/icons-vue";
 
 export default {
@@ -144,6 +144,13 @@ export default {
 
     // 获取任务空间详情
     const fetchTaskSpaceDetail = async () => {
+      // 验证ID是否有效
+      if (!taskSpaceId || taskSpaceId === 'undefined' || taskSpaceId === 'null') {
+        ElMessage.error('无效的任务空间ID');
+        router.push('/task-space');
+        return;
+      }
+
       loading.value = true;
       try {
         const response = await getTaskSpace(taskSpaceId);
@@ -153,6 +160,10 @@ export default {
           "获取任务空间详情失败: " +
             (error.response?.data?.message || error.message),
         );
+        // 如果是404错误，返回列表页
+        if (error.response?.status === 404) {
+          router.push('/task-space');
+        }
       } finally {
         loading.value = false;
       }
@@ -163,7 +174,7 @@ export default {
       loading.value = true;
       try {
         // 调用API获取特定任务空间下的任务列表
-        const response = await getTasks({ task_space_id: taskSpaceId });
+        const response = await tasksApi.getTasks({ task_space_id: taskSpaceId });
         tasks.value = response.data || [];
       } catch (error) {
         ElMessage.error(
@@ -222,7 +233,7 @@ export default {
           },
         );
 
-        await deleteTask(task.id);
+        await tasksApi.deleteTask(task.id);
         ElMessage.success("任务删除成功");
         fetchTasksBySpaceId(); // 重新获取任务列表
       } catch (error) {

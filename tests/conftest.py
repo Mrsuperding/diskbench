@@ -53,6 +53,11 @@ def base_url():
     """测试基础URL"""
     return "http://localhost:8081"
 
+@pytest.fixture(scope="session")
+def backend_url():
+    """后端API基础URL"""
+    return "http://localhost:5003/api"
+
 @pytest.fixture(scope="function")
 def api_client():
     """API客户端fixture，可用于发送HTTP请求"""

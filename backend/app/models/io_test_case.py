@@ -11,6 +11,7 @@ class IOTestCase(db.Model):
     description = db.Column(db.Text, comment='用例描述')
     tool = db.Column(db.Enum('fio', 'iozone'), default='fio', comment='测试工具')
     parameters = db.Column(db.JSON, nullable=False, comment='测试参数')
+    partition_mode = db.Column(db.Enum('concurrent', 'sequential'), default='concurrent', comment='分区执行模式：concurrent并发，sequential串行')
     is_public = db.Column(db.Boolean, default=False, comment='是否公开')
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, comment='创建人')
     created_at = db.Column(db.DateTime, default=datetime.utcnow, comment='创建时间')
@@ -37,6 +38,7 @@ class IOTestCase(db.Model):
             'description': self.description,
             'tool': self.tool,
             'parameters': self.parameters,
+            'partition_mode': self.partition_mode,
             'is_public': self.is_public,
             'created_by': self.created_by,
             'created_at': self.created_at.isoformat(),

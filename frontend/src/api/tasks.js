@@ -28,8 +28,8 @@ export default {
   },
 
   // 执行任务
-  executeTask(taskId) {
-    return request.post(`/tasks/run/${taskId}`);
+  executeTask(taskId, executionMode = 'restart') {
+    return request.post(`/tasks/run/${taskId}`, { execution_mode: executionMode });
   },
 
   // 暂停任务
@@ -73,5 +73,10 @@ export default {
       method: "get",
       params,
     });
+  },
+
+  // 多任务性能对比
+  compareTasks(data) {
+    return request.post("/tasks/compare", data);
   },
 };

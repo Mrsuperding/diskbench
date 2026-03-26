@@ -1,50 +1,13 @@
 {
   "auth": {
-    "valid_credentials": {
-      "username": "admin",
-      "password": "admin123"
+    "register": {
+      "username": "testuser_auth",
+      "email": "test_auth@example.com",
+      "password": "test123456"
     },
-    "invalid_credentials": {
-      "username": "invalid",
-      "password": "wrongpass"
+    "login": {
+      "username": "testuser_auth",
+      "password": "test123456"
     }
-  },
-  "nodes": {
-    "valid_node": {
-      "name": "test-node",
-      "ip_address": "127.0.0.1",
-      "type": "storage",
-      "status": "active"
-    }
-  },
-  "io_cases": {
-    "basic_read": {
-      "name": "basic-read-test",
-      "block_size": "4",
-      "queue_depth": "16",
-      "io_type": "randread",
-      "runtime": "60"
-    },
-    "basic_write": {
-      "name": "basic-write-test",
-      "block_size": "4",
-      "queue_depth": "16",
-      "io_type": "randwrite",
-      "runtime": "60"
-    }
-  },
-  "tasks": {
-    "test_task": {
-      "name": "test-io-task",
-      "description": "Test IO task",
-      "status": "pending",
-      "priority": "medium"
-    }
-  },
-  "endpoints": {
-    "login": "/api/auth/login",
-    "nodes": "/api/nodes",
-    "io_cases": "/api/io-cases",
-    "tasks": "/api/tasks"
   }
 }

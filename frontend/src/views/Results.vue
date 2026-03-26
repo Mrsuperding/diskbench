@@ -610,8 +610,8 @@ const loadAvailableDevices = async () => {
       if (devices.size > 0) {
         availableDevices.value = Array.from(devices);
         selectedDevices.value = Array.from(devices);
-        // 加载FIO日志数据
-        loadFioMetricsFromLogs();
+        // 加载FIO日志数据（初始化时不显示成功消息）
+        loadFioMetricsFromLogs(false);
       } else {
         // 如果节点信息中没有分区，从日志中提取
         const response = await getTaskLogs(taskId.value);
@@ -628,8 +628,8 @@ const loadAvailableDevices = async () => {
           });
           availableDevices.value = Array.from(logDevices);
           selectedDevices.value = Array.from(logDevices);
-          // 加载FIO日志数据
-          loadFioMetricsFromLogs();
+          // 加载FIO日志数据（初始化时不显示消息）
+          loadFioMetricsFromLogs(false);
         }
       }
     }
@@ -638,20 +638,24 @@ const loadAvailableDevices = async () => {
     // 失败时使用空列表，避免硬编码
     availableDevices.value = [];
     selectedDevices.value = [];
-    // 加载FIO日志数据
-    loadFioMetricsFromLogs();
+    // 加载FIO日志数据（初始化时不显示消息）
+    loadFioMetricsFromLogs(false);
   }
 };
 
 // 从FIO日志文件获取数据
-const loadFioMetricsFromLogs = async () => {
+const loadFioMetricsFromLogs = async (showMessage = true) => {
   if (selectedNodes.value.length === 0) {
-    ElMessage.warning("请先选择节点");
+    if (showMessage) {
+      ElMessage.warning("请先选择节点");
+    }
     return;
   }
 
   if (selectedDevices.value.length === 0) {
-    ElMessage.warning("请先选择分区");
+    if (showMessage) {
+      ElMessage.warning("请先选择分区");
+    }
     return;
   }
 
@@ -674,7 +678,9 @@ const loadFioMetricsFromLogs = async () => {
       rawIOStatData.value = response.data;
       console.log("FIO日志数据:", rawIOStatData.value);
       updateDataTable();
-      ElMessage.success(`成功加载 ${response.data.length} 条数据`);
+      if (showMessage) {
+        ElMessage.success(`成功加载 ${response.data.length} 条数据`);
+      }
     } else {
       // 确保数据为空时也能正确更新表格
       rawIOStatData.value = [];
@@ -971,8 +977,8 @@ const handleTabChange = (tabName) => {
     ) {
       selectedDevices.value = Array.from(availableDevices.value);
     }
-    // 加载FIO日志数据
-    loadFioMetricsFromLogs();
+    // 加载FIO日志数据（初始化时不显示消息）
+    loadFioMetricsFromLogs(false);
   }
 };
 

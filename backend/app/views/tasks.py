@@ -74,8 +74,15 @@ def get_task_io_test_cases(task_id, db):
         return []
 
 
-def run_task_execution(task_id, execution_id, app):
-    """执行任务的实际逻辑"""
+def run_task_execution(task_id, execution_id, app, execution_mode='restart'):
+    """执行任务的实际逻辑
+
+    Args:
+        task_id: 任务ID
+        execution_id: 执行记录ID
+        app: Flask应用实例
+        execution_mode: 执行模式，restart（重新运行）或resume（继续执行）
+    """
     # 使用应用上下文装饰器
     @with_app_context(app)
     def execute_task():
@@ -134,7 +141,7 @@ def run_task_execution(task_id, execution_id, app):
                 
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     # 提交所有节点任务
-                    future_to_node = {executor.submit(execute_node_task, node, task_id, execution_id, io_test_cases, app): node for node in nodes}
+                    future_to_node = {executor.submit(execute_node_task, node, task_id, execution_id, io_test_cases, app, execution_mode): node for node in nodes}
                     
                     # 收集执行结果
                     for future in as_completed(future_to_node):
@@ -152,7 +159,7 @@ def run_task_execution(task_id, execution_id, app):
                 # 串行执行
                 logging.info("使用串行模式执行节点任务")
                 for node in nodes:
-                    node_failed_flag, error_msg = execute_node_task(node, task_id, execution_id, io_test_cases, app)
+                    node_failed_flag, error_msg = execute_node_task(node, task_id, execution_id, io_test_cases, app, execution_mode)
                     if node_failed_flag:
                         task_failed = True
                         failure_reasons.append(f"节点 {node.name} ({node.ip_address}): {error_msg}")
@@ -221,10 +228,21 @@ def run_task_execution(task_id, execution_id, app):
 
 @tasks_bp.route('/run/<int:task_id>', methods=['POST'])
 def run_task(task_id):
-    """执行任务"""
+    """执行任务
+
+    支持两种执行模式：
+    - restart: 重新运行（清空旧的TestResult，从头开始）
+    - resume: 继续执行（保留已完成的TestResult，只执行未完成的组合）
+    """
     try:
         from flask import current_app
         app = current_app._get_current_object()
+
+        # 获取请求参数
+        data = request.get_json() or {}
+        execution_mode = data.get('execution_mode', 'restart')  # 默认为重新运行
+
+        logger.info(f"执行任务 {task_id}，执行模式: {execution_mode}")
 
         # 获取任务信息
         task = db.session.query(TestTask).filter_by(id=task_id).first()
@@ -234,6 +252,17 @@ def run_task(task_id):
                 'message': '任务不存在',
                 'data': None
             }), 404
+
+        # 如果是restart模式，清空旧的测试结果
+        if execution_mode == 'restart':
+            from app.models.test_result import TestResult
+            deleted_count = db.session.query(TestResult).filter_by(test_task_id=task_id).delete()
+            logger.info(f"restart模式：删除任务 {task_id} 的 {deleted_count} 条旧测试结果")
+            db.session.commit()
+
+        # 更新任务状态为运行中
+        task.status = 'running'
+        task.started_at = datetime.utcnow()
 
         # 创建任务执行记录
         execution = TaskExecution(
@@ -247,17 +276,19 @@ def run_task(task_id):
         # 启动线程执行任务
         thread = threading.Thread(
             target=run_task_execution,
-            args=(task_id, execution.id, app)
+            args=(task_id, execution.id, app, execution_mode)
         )
         thread.daemon = True
         thread.start()
 
+        mode_text = '重新运行' if execution_mode == 'restart' else '继续执行'
         return jsonify({
             'success': True,
-            'message': '任务开始执行',
+            'message': f'任务开始{mode_text}',
             'data': {
                 'task_id': task_id,
-                'execution_id': execution.id
+                'execution_id': execution.id,
+                'execution_mode': execution_mode
             }
         }), 200
 
@@ -344,11 +375,17 @@ def get_tasks():
         from sqlalchemy.orm import joinedload
         from app.models import task_case_association, task_node_association
 
+        # 获取查询参数
+        task_space_id = request.args.get('task_space_id', type=int)
+
         # 使用 joinedload 一次性加载所有关联数据
-        tasks = db.session.query(TestTask)\
-            .options(joinedload(TestTask.nodes))\
-            .order_by(TestTask.created_at.desc())\
-            .all()
+        query = db.session.query(TestTask).options(joinedload(TestTask.nodes))
+
+        # 如果指定了 task_space_id，进行过滤
+        if task_space_id:
+            query = query.filter(TestTask.task_space_id == task_space_id)
+
+        tasks = query.order_by(TestTask.created_at.desc()).all()
 
         # 批量获取所有任务的测试用例ID（一次查询）
         task_ids = [task.id for task in tasks]
@@ -392,18 +429,81 @@ def get_tasks():
                 'name': io_cases_dict[case_id].name
             } for case_id in case_ids if case_id in io_cases_dict]
 
+            # 计算任务进度
+            progress = 0
+            if task.status == 'pending':
+                progress = 0
+            elif task.status == 'running':
+                # 对于运行中的任务，基于实际FIO命令执行进度计算
+                from app.models.test_result import TestResult
+
+                # 计算总的预期FIO命令数
+                total_expected_fio_commands = 0
+                for case_id in case_ids:
+                    if case_id in io_cases_dict:
+                        io_case = io_cases_dict[case_id]
+                        params = io_case.parameters or {}
+
+                        # 解析io_type数量
+                        io_type = params.get('io_type', 'read')
+                        if isinstance(io_type, list):
+                            io_type_count = len([it for it in io_type if it.strip()])
+                        elif isinstance(io_type, str) and ',' in io_type:
+                            io_type_count = len([it for it in io_type.split(',') if it.strip()])
+                        else:
+                            io_type_count = 1
+
+                        # 解析queue_depth数量
+                        queue_depth = params.get('queue_depth', '16')
+                        if isinstance(queue_depth, str) and ',' in queue_depth:
+                            queue_depth_count = len([qd for qd in queue_depth.split(',') if qd.strip()])
+                        else:
+                            queue_depth_count = 1
+
+                        # 解析block_size数量
+                        block_size = params.get('block_size', '4k')
+                        if isinstance(block_size, str) and ',' in block_size:
+                            block_size_count = len([bs for bs in block_size.split(',') if bs.strip()])
+                        else:
+                            block_size_count = 1
+
+                        # 每个IO case的FIO命令数 = io_type × queue_depth × block_size × nodes
+                        case_fio_count = io_type_count * queue_depth_count * block_size_count * len(task.nodes)
+                        total_expected_fio_commands += case_fio_count
+
+                # 统计已完成的FIO命令数
+                completed_fio_commands = 0
+                test_results = db.session.query(TestResult).filter_by(
+                    test_task_id=task.id
+                ).all()
+
+                for result in test_results:
+                    # parsed_results是一个数组，每个元素代表一个FIO命令的结果
+                    if result.parsed_results and isinstance(result.parsed_results, list):
+                        completed_fio_commands += len(result.parsed_results)
+
+                # 计算进度百分比
+                if total_expected_fio_commands > 0:
+                    progress = min(int((completed_fio_commands / total_expected_fio_commands) * 100), 99)
+                else:
+                    progress = 50  # 无法计算时显示50%
+            elif task.status in ['completed', 'failed', 'cancelled']:
+                progress = 100
+            else:
+                progress = 0
+
             tasks_data.append({
                 'id': task.id,
                 'name': task.name,
                 'description': task.description,
                 'status': task.status,
-                'priority': task.priority if hasattr(task, 'priority') else 'medium',
+                'priority': task.priority,
                 'execution_mode': task.execution_mode,
                 'created_at': task.created_at.isoformat() if task.created_at else None,
                 'updated_at': task.updated_at.isoformat() if task.updated_at else None,
                 'completed_at': task.completed_at.isoformat() if task.completed_at else None,
-                'task_space_id': task.task_space_id if hasattr(task, 'task_space_id') else None,
-                'progress': 0,  # 默认进度，前端可以计算
+                'task_space_id': task.task_space_id,
+                'progress': progress,
                 'nodes': nodes_data,
                 'io_test_cases': io_test_cases_data,
                 'io_test_case_ids': case_ids  # 保持兼容性
@@ -445,7 +545,10 @@ def create_task():
         task = TestTask(
             name=data.get('name'),
             description=data.get('description'),
-            execution_mode=data.get('execution_mode', 'parallel')
+            execution_mode=data.get('execution_mode', 'parallel'),
+            task_space_id=data.get('task_space_id'),
+            status=data.get('status', 'pending'),
+            priority=data.get('priority', 'medium')
         )
         db.session.add(task)
         db.session.commit()
@@ -503,7 +606,9 @@ def update_task(task_id):
             }), 404
         
         data = request.get_json()
-        
+
+        logger.info(f"更新任务 {task_id}，接收的数据: {data}")
+
         # 更新任务信息
         if 'name' in data:
             task.name = data['name']
@@ -511,6 +616,13 @@ def update_task(task_id):
             task.description = data['description']
         if 'execution_mode' in data:
             task.execution_mode = data['execution_mode']
+        if 'task_space_id' in data:
+            logger.info(f"更新task_space_id: {data['task_space_id']}")
+            task.task_space_id = data['task_space_id']
+        if 'status' in data:
+            task.status = data['status']
+        if 'priority' in data:
+            task.priority = data['priority']
         
         # 更新关联节点
         if 'node_ids' in data:
@@ -543,10 +655,12 @@ def update_task(task_id):
                             io_test_case_id=io_test_case_id
                         )
                     )
-        
+
         task.updated_at = datetime.utcnow()
         db.session.commit()
-        
+
+        logger.info(f"任务 {task_id} 更新成功，task_space_id: {task.task_space_id}")
+
         return jsonify({
             'success': True,
             'message': '更新任务成功',
@@ -556,6 +670,7 @@ def update_task(task_id):
                 'description': task.description,
                 'status': task.status,
                 'execution_mode': task.execution_mode,
+                'task_space_id': task.task_space_id,
                 'updated_at': task.updated_at
             }
         }), 200
@@ -887,4 +1002,187 @@ def get_task_operation_logs(task_id):
             'success': False,
             'message': f'获取操作日志失败: {str(e)}',
             'data': None
+        }), 500
+
+
+def aggregate_metrics(perf_data_list, mode='avg'):
+    """聚合性能指标
+
+    Args:
+        perf_data_list: IOPerformanceData对象列表
+        mode: 聚合模式，avg/max/min
+
+    Returns:
+        聚合后的指标字典
+    """
+    if not perf_data_list:
+        return {}
+
+    fields = ['read_iops', 'write_iops', 'read_kbps', 'write_kbps',
+              'await_time', 'lat_p99', 'lat_p9999', 'lat_max', 'util']
+
+    result = {}
+
+    for field in fields:
+        values = [getattr(p, field, 0) for p in perf_data_list if getattr(p, field, None) is not None]
+
+        if not values:
+            result[field] = 0
+            continue
+
+        if mode == 'avg':
+            result[field] = round(sum(values) / len(values), 2)
+        elif mode == 'max':
+            result[field] = round(max(values), 2)
+        elif mode == 'min':
+            result[field] = round(min(values), 2)
+
+    result['device_count'] = len(set([p.device for p in perf_data_list if p.device]))
+    result['sample_count'] = len(perf_data_list)
+
+    return result
+
+
+@tasks_bp.route('/compare', methods=['POST'])
+@jwt_required()
+def compare_tasks():
+    """多任务性能对比
+
+    请求体:
+    {
+        "task_ids": [1, 2, 3],
+        "node_ids": [1, 2],  // 可选
+        "devices": ["sda", "sdb"],  // 可选
+        "aggregation_mode": "avg"  // 可选，avg/max/min
+    }
+
+    返回:
+    {
+        "success": true,
+        "data": {
+            "tasks": [...],
+            "common_io_models": [...],
+            "comparison_data": [...],
+            "statistics": {...}
+        }
+    }
+    """
+    try:
+        # 1. 参数验证
+        data = request.get_json()
+        task_ids = data.get('task_ids', [])
+
+        if not task_ids or len(task_ids) < 2:
+            return jsonify({
+                'success': False,
+                'message': '至少需要选择2个任务进行对比'
+            }), 400
+
+        if len(task_ids) > 10:
+            return jsonify({
+                'success': False,
+                'message': '最多支持10个任务同时对比'
+            }), 400
+
+        # 2. 查询任务基本信息
+        tasks = TestTask.query.filter(TestTask.id.in_(task_ids)).all()
+        if len(tasks) != len(task_ids):
+            return jsonify({
+                'success': False,
+                'message': '部分任务不存在'
+            }), 404
+
+        # 3. 获取筛选条件
+        node_ids = data.get('node_ids')
+        devices = data.get('devices')
+        aggregation_mode = data.get('aggregation_mode', 'avg')
+
+        # 验证聚合模式
+        if aggregation_mode not in ['avg', 'max', 'min']:
+            aggregation_mode = 'avg'
+
+        # 4. 查询性能数据并聚合
+        from app.models.test_log import IOPerformanceData
+
+        comparison_data = {}
+        all_io_models = set()
+
+        for task in tasks:
+            query = db.session.query(IOPerformanceData).filter_by(test_task_id=task.id)
+
+            # 应用筛选条件
+            if node_ids:
+                query = query.filter(IOPerformanceData.node_id.in_(node_ids))
+            if devices:
+                query = query.filter(IOPerformanceData.device.in_(devices))
+
+            perf_data = query.all()
+
+            # 按IO模型分组
+            for io_model_name in set([p.io_model_name for p in perf_data if p.io_model_name]):
+                all_io_models.add(io_model_name)
+
+                if io_model_name not in comparison_data:
+                    comparison_data[io_model_name] = {'metrics_by_task': {}}
+
+                # 聚合该任务的该IO模型的所有数据
+                model_data = [p for p in perf_data if p.io_model_name == io_model_name]
+                aggregated = aggregate_metrics(model_data, aggregation_mode)
+
+                comparison_data[io_model_name]['metrics_by_task'][str(task.id)] = {
+                    'task_name': task.name,
+                    **aggregated
+                }
+
+        # 5. 找出共同的IO模型
+        task_io_models = {}
+        for task in tasks:
+            task_io_models[task.id] = set([
+                io_model for io_model, data in comparison_data.items()
+                if str(task.id) in data['metrics_by_task']
+            ])
+
+        # 计算交集
+        common_io_models = set.intersection(*task_io_models.values()) if task_io_models else set()
+
+        # 6. 只返回共同的IO模型数据
+        filtered_comparison_data = [
+            {
+                'io_model_name': io_model,
+                'metrics_by_task': comparison_data[io_model]['metrics_by_task']
+            }
+            for io_model in sorted(common_io_models)
+        ]
+
+        # 7. 构建任务信息
+        tasks_info = []
+        for task in tasks:
+            task_dict = task.to_dict()
+            task_dict['node_count'] = len(task.nodes) if task.nodes else 0
+            tasks_info.append(task_dict)
+
+        # 8. 构建返回数据
+        return jsonify({
+            'success': True,
+            'message': '对比数据获取成功',
+            'data': {
+                'tasks': tasks_info,
+                'common_io_models': sorted(list(common_io_models)),
+                'comparison_data': filtered_comparison_data,
+                'statistics': {
+                    'total_io_models': len(all_io_models),
+                    'common_io_models_count': len(common_io_models),
+                    'unique_io_models': {
+                        str(tid): sorted(list(models - common_io_models))
+                        for tid, models in task_io_models.items()
+                    }
+                }
+            }
+        }), 200
+
+    except Exception as e:
+        logger.error(f"多任务对比失败: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'对比失败: {str(e)}'
         }), 500

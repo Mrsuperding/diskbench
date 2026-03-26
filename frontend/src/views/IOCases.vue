@@ -30,7 +30,7 @@
       </template>
 
       <el-table
-        :data="filteredIOCases"
+        :data="paginatedIOCases"
         style="width: 100%"
         border
         stripe
@@ -90,7 +90,7 @@
           :page-sizes="[10, 20, 50, 100]"
           :page-size="pageSize"
           layout="total, sizes, prev, pager, next, jumper"
-          :total="ioCases.length"
+          :total="filteredIOCases.length"
         />
       </div>
     </el-card>
@@ -106,7 +106,7 @@
 </template>
 
 <script>
-import { ref, reactive, computed, onMounted } from "vue";
+import { ref, reactive, computed, onMounted, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { Plus, Search, Delete } from "@element-plus/icons-vue";
 import ioCasesApi from "../api/ioCases";
@@ -140,6 +140,13 @@ export default {
       return ioCases.value.filter((ioCase) =>
         ioCase.name.toLowerCase().includes(searchQuery.value.toLowerCase()),
       );
+    });
+
+    // 计算属性：分页后的测试用例列表
+    const paginatedIOCases = computed(() => {
+      const start = (currentPage.value - 1) * pageSize.value;
+      const end = start + pageSize.value;
+      return filteredIOCases.value.slice(start, end);
     });
 
     // 方法：加载测试用例列表
@@ -252,6 +259,11 @@ export default {
       currentPage.value = current;
     };
 
+    // 监听搜索查询变化，重置页码
+    watch(searchQuery, () => {
+      currentPage.value = 1;
+    });
+
     // 初始化加载数据
     onMounted(() => {
       loadIOCases();
@@ -264,6 +276,7 @@ export default {
       currentPage,
       pageSize,
       filteredIOCases,
+      paginatedIOCases,
       dialogVisible,
       dialogTitle,
       currentIOCaseData,

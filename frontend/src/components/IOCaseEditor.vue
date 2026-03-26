@@ -126,6 +126,16 @@
             />
             <span class="form-item-hint">这些参数会直接添加到fio命令后面</span>
           </el-form-item>
+          <el-form-item label="分区执行模式" prop="partition_mode">
+            <el-radio-group v-model="ioCaseForm.partition_mode">
+              <el-radio label="concurrent">并发执行</el-radio>
+              <el-radio label="sequential">串行执行</el-radio>
+            </el-radio-group>
+            <div class="form-item-hint">
+              <div>• 并发执行：同时对所有分区下IO（单个FIO命令，多个filename）</div>
+              <div>• 串行执行：依次对每个分区下IO（多个FIO命令，每个分区一个）</div>
+            </div>
+          </el-form-item>
           <el-form-item v-if="showStatus" label="任务状态" prop="status">
             <el-select v-model="ioCaseForm.status" placeholder="请选择任务状态">
               <el-option label="待执行" value="pending" />
@@ -207,6 +217,7 @@ export default {
       sync: false,
       numjobs: "1",
       description: "",
+      partition_mode: "concurrent",
       status: "pending",
     });
 
@@ -348,6 +359,7 @@ export default {
         const caseData = {
           name: ioCaseForm.name,
           description: ioCaseForm.description,
+          partition_mode: ioCaseForm.partition_mode,
           parameters: {
             block_size: ioCaseForm.block_size,
             queue_depth: ioCaseForm.queue_depth,
@@ -415,6 +427,7 @@ export default {
                   : true,
             sync: newData.sync || newData.parameters?.sync || false,
             numjobs: newData.numjobs || newData.parameters?.numjobs || "1",
+            partition_mode: newData.partition_mode || "concurrent",
             status: newData.status || "pending",
           });
           console.log("更新后的ioCaseForm:", ioCaseForm);

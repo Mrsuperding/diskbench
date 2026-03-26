@@ -28,7 +28,7 @@
       </template>
 
       <el-table
-        :data="filteredCredentials"
+        :data="paginatedCredentials"
         style="width: 100%"
         border
         stripe
@@ -73,7 +73,7 @@
           :page-sizes="[10, 20, 50, 100]"
           :page-size="pageSize"
           layout="total, sizes, prev, pager, next, jumper"
-          :total="credentials.length"
+          :total="filteredCredentials.length"
         />
       </div>
     </el-card>
@@ -190,7 +190,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed } from "vue";
+import { ref, reactive, computed, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import loginCredentialsApi from "@/api/loginCredentials";
 import { useRouter } from "vue-router";
@@ -304,6 +304,13 @@ const filteredCredentials = computed(() => {
   return credentials.value.filter((credential) =>
     credential.alias.toLowerCase().includes(searchQuery.value.toLowerCase()),
   );
+});
+
+// 计算属性：分页后的凭证列表
+const paginatedCredentials = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value;
+  const end = start + pageSize.value;
+  return filteredCredentials.value.slice(start, end);
 });
 
 // 方法：加载登录凭证列表
@@ -472,6 +479,11 @@ const handleSizeChange = (size) => {
 const handleCurrentChange = (current) => {
   currentPage.value = current;
 };
+
+// 监听搜索查询变化，重置页码
+watch(searchQuery, () => {
+  currentPage.value = 1;
+});
 
 // 初始化加载登录凭证列表
 loadCredentials();

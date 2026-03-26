@@ -730,8 +730,8 @@ class LogCollector:
     
     def generate_io_model_name(self, node_count, vol_count, block_size, rw_type, queue_depth, thread_count):
         """生成IO模型名称
-        
-        格式: {节点数量}VM_{卷数量}VOL_{块大小}_{读写模式}_{队列深度}d_{线程数量}j
+
+        格式: {节点数量}VM_{卷数量}VOL_{块大小}_{读写模式}_{队列深度}d_{线程数量}n
         """
         try:
             # 确保参数有效
@@ -741,9 +741,9 @@ class LogCollector:
             rw_type = rw_type or 'randread'
             queue_depth = int(queue_depth) if queue_depth else 1
             thread_count = int(thread_count) if thread_count else 1
-            
+
             # 生成模型名称
-            io_model_name = f"{node_count}VM_{vol_count}VOL_{block_size}_{rw_type}_{queue_depth}d_{thread_count}j"
+            io_model_name = f"{node_count}VM_{vol_count}VOL_{block_size}_{rw_type}_{queue_depth}d_{thread_count}n"
             logger.info(f"生成IO模型名称: {io_model_name}")
             return io_model_name
         except Exception as e:

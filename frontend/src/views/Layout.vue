@@ -168,6 +168,11 @@ const menuRoutes = computed(() => {
       return false;
     }
 
+    // 隐藏的路由不显示在菜单
+    if (route.meta?.hidden) {
+      return false;
+    }
+
     // 检查管理员权限
     if (route.meta?.adminOnly && !authStore.isAdmin) {
       return false;

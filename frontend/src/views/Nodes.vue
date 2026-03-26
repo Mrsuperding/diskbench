@@ -28,7 +28,7 @@
       </template>
 
       <el-table
-        :data="filteredNodes"
+        :data="paginatedNodes"
         style="width: 100%"
         border
         stripe
@@ -76,7 +76,7 @@
           :page-sizes="[10, 20, 50, 100]"
           :page-size="pageSize"
           layout="total, sizes, prev, pager, next, jumper"
-          :total="nodes.length"
+          :total="filteredNodes.length"
         />
       </div>
     </el-card>
@@ -253,7 +253,7 @@
 </template>
 
 <script>
-import { ref, reactive, computed, onMounted, onBeforeUnmount } from "vue";
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
   Plus,
@@ -350,6 +350,13 @@ export default {
       return nodes.value.filter((node) =>
         node.name.toLowerCase().includes(searchQuery.value.toLowerCase()),
       );
+    });
+
+    // 计算属性：分页后的节点列表
+    const paginatedNodes = computed(() => {
+      const start = (currentPage.value - 1) * pageSize.value;
+      const end = start + pageSize.value;
+      return filteredNodes.value.slice(start, end);
     });
 
     // 计算属性：过滤后的登录凭证列表
@@ -562,6 +569,11 @@ export default {
     // 定时检测节点状态（每5分钟）
     let statusCheckInterval = null;
 
+    // 监听搜索查询变化，重置页码
+    watch(searchQuery, () => {
+      currentPage.value = 1;
+    });
+
     // 组件挂载时启动定时任务
     onMounted(() => {
       // 立即检查一次
@@ -588,6 +600,7 @@ export default {
       currentPage,
       pageSize,
       filteredNodes,
+      paginatedNodes,
       dialogVisible,
       dialogTitle,
       nodeFormRef,

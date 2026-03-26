@@ -164,15 +164,21 @@
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="150">
+              <el-table-column label="操作" width="220">
                 <template #default="scope">
                   <el-button
-                    v-if="!editIpDialogVisible"
                     type="primary"
                     size="small"
-                    @click="startEditIp(scope.row)"
+                    @click.stop="startEditIp(scope.row)"
                   >
-                    编辑IP信息
+                    编辑IP
+                  </el-button>
+                  <el-button
+                    type="danger"
+                    size="small"
+                    @click.stop="deleteNode(scope.row)"
+                  >
+                    删除
                   </el-button>
                 </template>
               </el-table-column>
@@ -180,9 +186,6 @@
 
             <div class="selection-info" v-if="selectedNode">
               <p>已选中节点: {{ selectedNode.name }}</p>
-              <el-button type="danger" size="small" @click="deleteSelectedItem">
-                删除选中节点
-              </el-button>
             </div>
           </div>
           <div v-else class="no-data">暂无节点信息</div>
@@ -1702,17 +1705,77 @@ export default {
       console.log("编辑IO用例模型，row数据:", row);
       editIOTaskDialogTitle.value = "编辑IO用例模型";
       editingIOTask.value = row;
-      // 如果row中有io_cases数组，使用第一个元素作为initialData
-      // 否则直接使用row
+
+      // row.io_cases[0]包含完整的IO用例数据
       if (row.io_cases && row.io_cases.length > 0) {
-        console.log("使用io_cases[0]作为initialData:", row.io_cases[0]);
-        currentIOTaskData.value = row.io_cases[0];
+        const ioCase = row.io_cases[0];
+        console.log("使用io_cases[0]作为initialData:", ioCase);
+        // 确保数据完整
+        currentIOTaskData.value = {
+          id: ioCase.id,
+          name: ioCase.name || row.name,
+          description: ioCase.description || '',
+          tool: ioCase.tool || 'fio',
+          parameters: ioCase.parameters || {}
+        };
       } else {
+        // 如果没有io_cases，直接使用row（可能只有ID）
         console.log("直接使用row作为initialData:", row);
-        currentIOTaskData.value = row;
+        currentIOTaskData.value = {
+          id: row.id,
+          name: row.name || '',
+          description: '',
+          tool: 'fio',
+          parameters: {}
+        };
       }
       console.log("最终的currentIOTaskData:", currentIOTaskData.value);
       editIOTaskDialogVisible.value = true;
+    };
+
+    // 删除节点
+    const deleteNode = (node) => {
+      ElMessageBox.confirm(
+        `确定要从任务中移除节点「${node.name}」吗？`,
+        "删除确认",
+        {
+          confirmButtonText: "确定",
+          cancelButtonText: "取消",
+          type: "warning",
+        }
+      )
+        .then(async () => {
+          try {
+            // 从本地节点列表中移除
+            const index = taskNodes.value.findIndex((n) => n.id === node.id);
+            if (index > -1) {
+              taskNodes.value.splice(index, 1);
+            }
+
+            // 从任务详情的节点ID列表中移除
+            const nodeIds = taskDetail.node_ids || taskNodes.value.map(n => n.id);
+            const nodeIndex = nodeIds.findIndex((id) => id === node.id);
+            if (nodeIndex > -1) {
+              nodeIds.splice(nodeIndex, 1);
+
+              // 调用API更新任务的节点关联
+              await tasksApi.updateTask(taskId.value, {
+                node_ids: nodeIds,
+              });
+            }
+
+            ElMessage.success("节点删除成功");
+            selectedNode.value = null;
+
+            // 刷新任务详情
+            await getTaskDetail();
+          } catch (error) {
+            ElMessage.error("节点删除失败: " + error.message);
+          }
+        })
+        .catch(() => {
+          // 取消删除操作
+        });
     };
 
     // 删除IO任务
@@ -2018,6 +2081,56 @@ export default {
       }
     });
 
+    // 监听路由参数变化，重新加载数据
+    watch(
+      () => route.params.id,
+      async (newId, oldId) => {
+        if (newId && newId !== oldId) {
+          console.log(`路由参数变化: ${oldId} -> ${newId}`);
+
+          // 清理旧的WebSocket连接
+          if (socket.value) {
+            socket.value.emit("leave_task_room", { task_id: oldId });
+            socket.value.disconnect();
+            socket.value = null;
+          }
+
+          // 重置所有数据状态
+          Object.assign(taskDetail, {
+            id: "",
+            name: "",
+            description: "",
+            status: "",
+            priority: "",
+            execution_mode: "",
+            node_ids: [],
+            io_test_case_ids: [],
+            created_at: "",
+            updated_at: "",
+            completed_at: "",
+            task_space_id: null,
+          });
+
+          taskNodes.value = [];
+          ioTasks.value = [];
+          logs.value = [];
+          testResults.value = [];
+          detailedData.value = [];
+          selectedNode.value = null;
+          selectedIOCase.value = null;
+          selectedIOTask.value = null;
+
+          // 更新taskId
+          taskId.value = newId;
+
+          // 重新加载数据
+          await getTaskDetail();
+          await loadOperationHistory();
+        }
+      },
+      { immediate: false }
+    );
+
     const router = useRouter();
 
     // 跳转到性能抖动图表页面
@@ -2122,6 +2235,7 @@ export default {
       handleIOCaseSelectionChange,
       confirmAddNodes,
       confirmAddIOCases,
+      deleteNode,
       selectNode,
       selectIOTask,
       selectIOCase,

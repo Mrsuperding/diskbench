@@ -3,9 +3,14 @@
     <!-- 页面标题和操作按钮 -->
     <div class="page-header">
       <h1 class="page-title">任务管理</h1>
-      <el-button type="primary" @click="openCreateDialog">
-        <el-icon><Plus /></el-icon> 新建任务
-      </el-button>
+      <div class="header-buttons">
+        <el-button type="success" @click="goToComparison">
+          <el-icon><TrendCharts /></el-icon> 多任务对比
+        </el-button>
+        <el-button type="primary" @click="openCreateDialog">
+          <el-icon><Plus /></el-icon> 新建任务
+        </el-button>
+      </div>
     </div>
 
     <!-- 任务列表 -->
@@ -13,27 +18,40 @@
       <template #header>
         <div class="card-header">
           <span>任务列表</span>
-          <el-input
-            v-model="searchQuery"
-            placeholder="搜索任务名称"
-            clearable
-            size="small"
-            class="search-input"
-          >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
-          </el-input>
+          <div class="header-actions">
+            <el-button
+              type="danger"
+              size="small"
+              :disabled="selectedTasks.length === 0"
+              @click="batchDeleteTasks"
+            >
+              <el-icon><Delete /></el-icon>
+              批量删除 ({{ selectedTasks.length }})
+            </el-button>
+            <el-input
+              v-model="searchQuery"
+              placeholder="搜索任务名称"
+              clearable
+              size="small"
+              class="search-input"
+            >
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+            </el-input>
+          </div>
         </div>
       </template>
 
       <el-table
-        :data="filteredTasks"
+        :data="paginatedTasks"
         style="width: 100%"
         border
         stripe
         v-loading="loading"
+        @selection-change="handleSelectionChange"
       >
+        <el-table-column type="selection" width="55" />
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="name" label="任务名称" show-overflow-tooltip>
           <template #default="{ row }">
@@ -79,18 +97,39 @@
             <span v-else>未分配</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="350" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="primary" @click="openEditDialog(row)">
               <el-icon><Edit /></el-icon> 编辑
             </el-button>
+            <!-- 如果任务是运行中或暂停状态，显示下拉菜单（重新运行/继续执行） -->
+            <el-dropdown
+              v-if="row.status === 'running' || row.status === 'paused'"
+              @command="(command) => handleExecuteCommand(command, row)"
+            >
+              <el-button size="small" type="success">
+                <el-icon><VideoPlay /></el-icon> 执行 <el-icon class="el-icon--right"><arrow-down /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="restart">
+                    <el-icon><RefreshRight /></el-icon> 重新运行
+                  </el-dropdown-item>
+                  <el-dropdown-item command="resume">
+                    <el-icon><VideoPlay /></el-icon> 继续执行
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <!-- 否则显示普通执行按钮（默认restart模式） -->
             <el-button
+              v-else
               size="small"
               type="success"
               @click="executeTask(row)"
               :disabled="row.status === 'completed'"
             >
-              <el-icon><PlayArrow /></el-icon> 执行
+              <el-icon><VideoPlay /></el-icon> 执行
             </el-button>
             <el-button
               size="small"
@@ -98,13 +137,10 @@
               @click="pauseTask(row)"
               :disabled="row.status !== 'running'"
             >
-              <el-icon><Pause /></el-icon> 暂停
+              <el-icon><VideoPause /></el-icon> 暂停
             </el-button>
-            <el-button size="small" type="primary" @click="cloneTask(row)">
+            <el-button size="small" type="info" @click="cloneTask(row)">
               <el-icon><CopyDocument /></el-icon> 克隆
-            </el-button>
-            <el-button size="small" type="danger" @click="deleteTask(row)">
-              <el-icon><Delete /></el-icon> 删除
             </el-button>
           </template>
         </el-table-column>
@@ -119,7 +155,7 @@
           :page-sizes="[10, 20, 50, 100]"
           :page-size="pageSize"
           layout="total, sizes, prev, pager, next, jumper"
-          :total="tasks.length"
+          :total="filteredTasks.length"
         />
       </div>
     </el-card>
@@ -236,8 +272,12 @@ import {
   Search,
   Edit,
   Delete,
-  PlayArrow,
-  Pause,
+  VideoPlay,
+  VideoPause,
+  CopyDocument,
+  ArrowDown,
+  RefreshRight,
+  TrendCharts,
 } from "@element-plus/icons-vue";
 import tasksApi from "../api/tasks";
 import nodesApi from "../api/nodes";
@@ -252,8 +292,11 @@ export default {
     Search,
     Edit,
     Delete,
-    PlayArrow,
-    Pause,
+    VideoPlay,
+    VideoPause,
+    CopyDocument,
+    ArrowDown,
+    RefreshRight,
   },
   setup() {
     // 路由
@@ -269,6 +312,7 @@ export default {
     const searchQuery = ref("");
     const currentPage = ref(1);
     const pageSize = ref(10);
+    const selectedTasks = ref([]);
 
     // 对话框
     const dialogVisible = ref(false);
@@ -345,6 +389,13 @@ export default {
       return filtered;
     });
 
+    // 计算属性：分页后的任务列表
+    const paginatedTasks = computed(() => {
+      const start = (currentPage.value - 1) * pageSize.value;
+      const end = start + pageSize.value;
+      return filteredTasks.value.slice(start, end);
+    });
+
     // 方法：加载任务列表
     const loadTasks = async () => {
       loading.value = true;
@@ -419,15 +470,28 @@ export default {
     };
 
     // 方法：打开创建对话框
-    const openCreateDialog = () => {
+    const openCreateDialog = async () => {
       dialogTitle.value = "新建任务";
       editingTask.value = null;
       resetForm();
       dialogVisible.value = true;
+
+      // 懒加载：只在打开对话框时加载节点和测试用例数据
+      if (nodes.value.length === 0) {
+        await loadNodes();
+      }
+      if (ioCases.value.length === 0) {
+        await loadIOCases();
+      }
+    };
+
+    // 方法：跳转到任务对比页面
+    const goToComparison = () => {
+      router.push({ name: 'TaskComparison' });
     };
 
     // 方法：打开编辑对话框
-    const openEditDialog = (task) => {
+    const openEditDialog = async (task) => {
       dialogTitle.value = "编辑任务";
       editingTask.value = task;
       // 将单个io_test_case_id转换为数组形式
@@ -458,6 +522,14 @@ export default {
 
       Object.assign(taskForm, taskData);
       dialogVisible.value = true;
+
+      // 懒加载：只在打开对话框时加载节点和测试用例数据
+      if (nodes.value.length === 0) {
+        await loadNodes();
+      }
+      if (ioCases.value.length === 0) {
+        await loadIOCases();
+      }
     };
 
     // 方法：重置表单
@@ -533,15 +605,76 @@ export default {
         });
     };
 
-    // 方法：执行任务
-    const executeTask = async (task) => {
+    // 方法：处理表格选择变化
+    const handleSelectionChange = (selection) => {
+      selectedTasks.value = selection;
+    };
+
+    // 方法：批量删除任务
+    const batchDeleteTasks = () => {
+      if (selectedTasks.value.length === 0) {
+        ElMessage.warning("请先选择要删除的任务");
+        return;
+      }
+
+      const taskNames = selectedTasks.value.map(task => task.name).join("、");
+      ElMessageBox.confirm(
+        `确定要删除以下 ${selectedTasks.value.length} 个任务吗？此操作不可恢复。\n\n${taskNames}`,
+        "批量删除确认",
+        {
+          confirmButtonText: "确定",
+          cancelButtonText: "取消",
+          type: "warning",
+          dangerouslyUseHTMLString: false,
+        },
+      )
+        .then(async () => {
+          try {
+            loading.value = true;
+            const deletePromises = selectedTasks.value.map(task =>
+              tasksApi.deleteTask(task.id)
+            );
+            await Promise.all(deletePromises);
+            ElMessage.success(`成功删除 ${selectedTasks.value.length} 个任务`);
+            selectedTasks.value = [];
+            loadTasks(); // 重新加载任务列表
+          } catch (error) {
+            ElMessage.error("批量删除失败: " + error.message);
+          } finally {
+            loading.value = false;
+          }
+        })
+        .catch(() => {
+          // 取消删除
+        });
+    };
+
+    // 方法：处理执行命令下拉菜单
+    const handleExecuteCommand = async (command, task) => {
+      const modeText = command === 'restart' ? '重新运行' : '继续执行';
       try {
-        await tasksApi.executeTask(task.id);
-        ElMessage.success("任务执行成功");
+        await ElMessageBox.confirm(
+          `确定要${modeText}任务 "${task.name}" 吗？`,
+          '确认',
+          {
+            confirmButtonText: '确定',
+            cancelButtonText: '取消',
+            type: 'warning',
+          }
+        );
+        await tasksApi.executeTask(task.id, command);
+        ElMessage.success(`任务${modeText}成功`);
         loadTasks(); // 重新加载任务列表
       } catch (error) {
-        ElMessage.error("执行任务失败: " + error.message);
+        if (error !== 'cancel') {
+          ElMessage.error(`${modeText}任务失败: ` + error.message);
+        }
       }
+    };
+
+    // 方法：执行任务（保留兼容性，默认为restart模式）
+    const executeTask = async (task) => {
+      await handleExecuteCommand('restart', task);
     };
 
     // 方法：暂停任务
@@ -624,12 +757,19 @@ export default {
       currentPage.value = current;
     };
 
+    // 监听搜索查询变化，重置页码
+    watch(searchQuery, () => {
+      currentPage.value = 1;
+    });
+
     // 初始化加载数据
     onMounted(() => {
       loadTasks();
-      loadNodes();
-      loadIOCases();
       loadTaskSpaces();
+      // ❌ 删除：不再在页面加载时加载节点和测试用例列表
+      // loadNodes();
+      // loadIOCases();
+      // ✅ 改为懒加载：只在打开创建/编辑对话框时加载
     });
 
     return {
@@ -641,7 +781,9 @@ export default {
       searchQuery,
       currentPage,
       pageSize,
+      selectedTasks,
       filteredTasks,
+      paginatedTasks,
       dialogVisible,
       dialogTitle,
       taskFormRef,
@@ -656,10 +798,14 @@ export default {
       resetForm,
       submitForm,
       deleteTask,
+      handleSelectionChange,
+      batchDeleteTasks,
+      handleExecuteCommand,
       executeTask,
       pauseTask,
       cloneTask,
       goToTaskDetail,
+      goToComparison,
       getStatusType,
       getStatusText,
       getPriorityType,
@@ -691,6 +837,11 @@ export default {
   margin: 0;
 }
 
+.header-buttons {
+  display: flex;
+  gap: 12px;
+}
+
 .tasks-card {
   margin-bottom: 24px;
 }
@@ -699,6 +850,12 @@ export default {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .search-input {

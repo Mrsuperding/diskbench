@@ -218,8 +218,14 @@ class SSHClient:
         
         return None
     
-    def run_fio_test(self, fio_params, working_dir='/tmp'):
-        """运行fio测试"""
+    def run_fio_test(self, fio_params, working_dir='/tmp', log_callback=None):
+        """运行fio测试
+
+        Args:
+            fio_params: FIO参数字典
+            working_dir: 工作目录
+            log_callback: 日志回调函数，签名为 callback(fio_cmd, io_type, iodepth, blocksize)
+        """
         # 定义fio支持的核心参数列表
         fio_supported_params = [
             'rw', 'blocksize', 'iodepth', 'filename', 'size', 'runtime', 'numjobs', 
@@ -408,13 +414,19 @@ class SSHClient:
             current_params['block_size'] = bs
             
             single_cmd_parts = build_cmd_parts(current_params)
-            
+
             command = ' '.join(single_cmd_parts)
-            
+
             # 切换到工作目录
             if working_dir:
                 command = f'cd {working_dir} && {command}'
-            
+
+            # 调用日志回调函数（如果提供）
+            if log_callback:
+                # 构建不带工作目录前缀的FIO命令用于显示
+                display_command = ' '.join(single_cmd_parts)
+                log_callback(display_command, io, qd, bs)
+
             # 记录当前组合的详细信息
             logger.info(f"执行fio测试组合: io_type={io}, iodepth={qd}, blocksize={bs}")
             logger.info(f"执行fio命令: {command}")
