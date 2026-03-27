@@ -18,6 +18,7 @@ class Node(db.Model):
     memory_total = db.Column(db.BigInteger, comment='总内存(字节)')
     disk_total = db.Column(db.BigInteger, comment='总磁盘空间(字节)')
     login_credential_id = db.Column(db.Integer, db.ForeignKey('login_credentials.id'), nullable=True, comment='登录凭证ID')
+    environment_space_id = db.Column(db.Integer, db.ForeignKey('environment_spaces.id'), nullable=True, comment='所属环境空间ID')
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, comment='创建人')
     created_at = db.Column(db.DateTime, default=datetime.utcnow, comment='创建时间')
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment='更新时间')
@@ -25,6 +26,7 @@ class Node(db.Model):
     io_partitions = db.Column(db.JSON, default=list, comment='IO分区列表')
     
     # 关系
+    environment_space = db.relationship('EnvironmentSpace', back_populates='nodes')
     status_history = db.relationship('NodeStatusHistory', backref='node', lazy='dynamic')
     test_results = db.relationship('TestResult', backref='node', lazy='dynamic')
     system_metrics = db.relationship('SystemMetric', backref='node', lazy='dynamic')
@@ -53,6 +55,8 @@ class Node(db.Model):
             'memory_total': self.memory_total,
             'disk_total': self.disk_total,
             'login_credential_id': self.login_credential_id,
+            'environment_space_id': self.environment_space_id,
+            'environment_space_name': self.environment_space.name if self.environment_space else None,
             'created_by': self.created_by,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),

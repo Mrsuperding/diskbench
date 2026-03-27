@@ -91,6 +91,30 @@ const routes = [
         component: () => import("@/views/Users.vue"),
         meta: { title: "用户管理", icon: "User", adminOnly: true },
       },
+      {
+        path: "/environment-spaces",
+        name: "EnvironmentSpaces",
+        component: () => import("@/views/EnvironmentSpaces.vue"),
+        meta: { title: "环境空间", icon: "OfficeBuilding" },
+      },
+      {
+        path: "/environment-spaces/:id",
+        name: "EnvironmentSpaceDetail",
+        component: () => import("@/views/EnvironmentSpaceDetail.vue"),
+        meta: { title: "环境详情", icon: "OfficeBuilding", hidden: true },
+      },
+      {
+        path: "/environment-spaces/:id/monitoring",
+        name: "NodeMonitoring",
+        component: () => import("@/views/NodeMonitoring.vue"),
+        meta: { title: "节点监控", icon: "Monitor", hidden: true },
+      },
+      {
+        path: "/node-operations",
+        name: "NodeOperations",
+        component: () => import("@/views/NodeOperations.vue"),
+        meta: { title: "节点操作", icon: "Operation" },
+      },
     ],
   },
   {

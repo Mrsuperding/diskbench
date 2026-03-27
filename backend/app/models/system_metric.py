@@ -78,3 +78,19 @@ class SystemMetric(db.Model):
         db.session.add(metric)
         db.session.commit()
         return metric
+
+    @classmethod
+    def get_metrics_by_environment(cls, environment_space_id, start_time, end_time, metric_name=None):
+        """获取环境空间内所有节点的指标数据"""
+        from app.models.node import Node
+
+        query = db.session.query(cls).join(Node).filter(
+            Node.environment_space_id == environment_space_id,
+            cls.collection_time >= start_time,
+            cls.collection_time <= end_time
+        )
+
+        if metric_name:
+            query = query.filter(cls.metric_name == metric_name)
+
+        return query.order_by(cls.collection_time.asc()).all()

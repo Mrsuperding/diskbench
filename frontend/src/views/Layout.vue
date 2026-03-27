@@ -125,6 +125,7 @@ import {
   Document,
   DataAnalysis,
   Setting,
+  OfficeBuilding,
 } from "@element-plus/icons-vue";
 
 const route = useRoute();

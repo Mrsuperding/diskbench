@@ -31,4 +31,24 @@ export default {
   checkNodeStatus(nodeId) {
     return request.get(`/nodes/${nodeId}/status`);
   },
+
+  // 获取节点监控数据
+  getNodeMetrics(nodeId) {
+    return request.get(`/nodes/${nodeId}/metrics`);
+  },
+
+  // 获取节点历史监控数据
+  getNodeMetricsHistory(nodeId, params) {
+    return request.get(`/nodes/${nodeId}/metrics/history`, { params });
+  },
+
+  // 手动触发节点监控数据采集
+  collectNodeMetrics(nodeId) {
+    return request.post(`/nodes/${nodeId}/metrics/collect`);
+  },
+
+  // 批量采集所有节点监控数据
+  collectAllMetrics() {
+    return request.post("/nodes/metrics/collect-all");
+  },
 };

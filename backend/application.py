@@ -4,6 +4,8 @@ from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from flask_migrate import Migrate
 from flask_socketio import SocketIO
+from apscheduler.schedulers.background import BackgroundScheduler
+import atexit
 
 from config import config
 from app.models import db
@@ -20,6 +22,9 @@ from app.views.task_spaces import task_spaces_bp
 from app.views.dashboard import dashboard_bp
 from app.views.login_credentials import login_credentials_bp
 from app.views.logs import logs_bp
+from app.views.environment_spaces import environment_spaces_bp
+from app.views.monitoring_config import monitoring_config_bp
+from app.views.node_operations import node_operations_bp
 
 from app.utils.error_handlers import register_error_handlers
 from app.utils.jwt_callbacks import register_jwt_callbacks
@@ -98,6 +103,9 @@ def create_app(config_name=None):
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
     app.register_blueprint(login_credentials_bp, url_prefix='/api/login-credentials')
     app.register_blueprint(logs_bp, url_prefix='/api/logs')
+    app.register_blueprint(environment_spaces_bp, url_prefix='/api/environment-spaces')
+    app.register_blueprint(monitoring_config_bp, url_prefix='/api/monitoring-config')
+    app.register_blueprint(node_operations_bp, url_prefix='/api/node-operations')
     
     # 注册错误处理
     register_error_handlers(app)
@@ -136,8 +144,97 @@ def create_app(config_name=None):
                 'dashboard': '/api/dashboard'
             }
         })
-    
+
     return app
+
+
+# 配置 APScheduler 定时任务
+scheduler = BackgroundScheduler()
+
+
+def collect_all_metrics():
+    """定时任务：采集所有环境空间内节点的指标"""
+    from app.models.environment_space import EnvironmentSpace
+    from app.services.metric_collector import MetricCollector
+
+    with app.app_context():
+        try:
+            # 获取所有激活的环境空间
+            spaces = EnvironmentSpace.get_all_active()
+            app.logger.info(f'开始采集 {len(spaces)} 个环境空间的监控指标')
+
+            total_nodes = 0
+            for space in spaces:
+                # 采集该环境空间内的所有节点
+                nodes = space.nodes
+                total_nodes += len(nodes)
+
+                for node in nodes:
+                    try:
+                        metrics = MetricCollector.collect_node_metrics(node.id)
+                        MetricCollector.save_metrics(node.id, metrics)
+
+                        # 根据连通性更新节点状态
+                        if not metrics.get('is_connected'):
+                            node.status = 'inactive'
+                        else:
+                            node.status = 'active'
+                        db.session.commit()
+
+                    except Exception as e:
+                        app.logger.error(f'采集节点 {node.id} ({node.name}) 指标失败: {e}')
+
+            app.logger.info(f'指标采集完成: {len(spaces)} 个环境空间, {total_nodes} 个节点')
+        except Exception as e:
+            app.logger.error(f'采集任务执行失败: {e}')
+
+
+def cleanup_old_metrics():
+    """定时任务：清理一周以前的监控数据"""
+    from app.models.system_metric import SystemMetric
+
+    with app.app_context():
+        try:
+            # 计算一周前的时间
+            one_week_ago = datetime.utcnow() - timedelta(days=7)
+
+            # 删除一周前的数据
+            deleted = SystemMetric.query.filter(
+                SystemMetric.collection_time < one_week_ago
+            ).delete(synchronize_session=False)
+
+            db.session.commit()
+            app.logger.info(f'清理完成: 删除了 {deleted} 条过期监控数据（早于 {one_week_ago}）')
+        except Exception as e:
+            app.logger.error(f'清理监控数据失败: {e}')
+            db.session.rollback()
+
+
+
+# 添加任务 - 每30秒执行一次采集
+scheduler.add_job(
+    func=collect_all_metrics,
+    trigger='interval',
+    seconds=30,
+    id='collect_metrics',
+    replace_existing=True
+)
+
+# 添加任务 - 每天凌晨3点清理过期数据
+scheduler.add_job(
+    func=cleanup_old_metrics,
+    trigger='cron',
+    hour=3,
+    minute=0,
+    id='cleanup_metrics',
+    replace_existing=True
+)
+
+# 启动调度器
+scheduler.start()
+
+# 优雅关闭
+atexit.register(lambda: scheduler.shutdown())
 
 # 创建应用实例
 app = create_app()

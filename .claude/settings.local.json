@@ -45,7 +45,11 @@
       "Bash(node -e \":*)",
       "Bash(dos2unix D:/delvelop_project/ai_project/diskbench_pro2/diskbench_pro2/frontend/src/views/TaskComparison.vue)",
       "Bash(iconv:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(mkdir -p app/services)",
+      "Bash(touch app/services/__init__.py)",
+      "Bash(npm i:*)",
+      "Bash(pip install:*)"
     ]
   }
 }
