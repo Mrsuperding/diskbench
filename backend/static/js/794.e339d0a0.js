@@ -1,0 +1,2 @@
+"use strict";(self["webpackChunkio_performance_platform_frontend"]=self["webpackChunkio_performance_platform_frontend"]||[]).push([[794],{794:function(n,r,e){e.r(r),e.d(r,{default:function(){return f}});var t=e(641);const a={class:"users-container"};function o(n,r,e,o,s,u){return(0,t.uX)(),(0,t.CE)("div",a,[...r[0]||(r[0]=[(0,t.Lk)("h1",null,"用户管理",-1)])])}var s={name:"Users",data(){return{}},methods:{}},u=e(6262);const c=(0,u.A)(s,[["render",o],["__scopeId","data-v-7f8d328b"]]);var f=c}}]);
+//# sourceMappingURL=794.e339d0a0.js.map

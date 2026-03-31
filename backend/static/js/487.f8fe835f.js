@@ -1,0 +1,2 @@
+"use strict";(self["webpackChunkio_performance_platform_frontend"]=self["webpackChunkio_performance_platform_frontend"]||[]).push([[487],{5868:function(n,e,t){t.r(e),t.d(e,{default:function(){return f}});var r=t(641);const a={class:"settings-container"};function o(n,e,t,o,c,s){return(0,r.uX)(),(0,r.CE)("div",a,[...e[0]||(e[0]=[(0,r.Lk)("h1",null,"系统设置",-1)])])}var c={name:"Settings",data(){return{}},methods:{}},s=t(6262);const u=(0,s.A)(c,[["render",o],["__scopeId","data-v-5503ce01"]]);var f=u}}]);
+//# sourceMappingURL=487.f8fe835f.js.map

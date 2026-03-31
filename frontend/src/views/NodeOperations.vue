@@ -1,0 +1,811 @@
+<template>
+  <div class="node-operations-container">
+    <!-- 页面标题 -->
+    <div class="page-header">
+      <h2>节点操作</h2>
+      <p class="subtitle">选择环境空间和节点，执行批量操作</p>
+    </div>
+
+    <!-- 环境空间和操作类型选择 -->
+    <el-row :gutter="20">
+      <!-- 选择环境空间 -->
+      <el-col :span="12">
+        <el-card shadow="hover">
+          <template #header>
+            <div class="card-header">
+              <el-icon><OfficeBuilding /></el-icon>
+              <span>选择环境空间</span>
+            </div>
+          </template>
+          <el-select
+            v-model="selectedSpaceId"
+            placeholder="请选择环境空间"
+            size="large"
+            style="width: 100%"
+            @change="handleSpaceChange"
+          >
+            <el-option
+              v-for="space in spaces"
+              :key="space.id"
+              :label="space.name"
+              :value="space.id"
+            >
+              <span>{{ space.name }}</span>
+              <span style="float: right; color: #8492a6; font-size: 13px">
+                {{ space.node_count }} 个节点
+              </span>
+            </el-option>
+          </el-select>
+          <div v-if="selectedSpace" class="space-info">
+            <el-descriptions :column="1" size="small" border>
+              <el-descriptions-item label="空间名称">{{
+                selectedSpace.name
+              }}</el-descriptions-item>
+              <el-descriptions-item label="节点数量">{{
+                selectedSpace.node_count
+              }}</el-descriptions-item>
+              <el-descriptions-item label="描述">
+                {{ selectedSpace.description || "暂无描述" }}
+              </el-descriptions-item>
+            </el-descriptions>
+          </div>
+        </el-card>
+      </el-col>
+
+      <!-- 选择操作类型 -->
+      <el-col :span="12">
+        <el-card shadow="hover">
+          <template #header>
+            <div class="card-header">
+              <el-icon><Operation /></el-icon>
+              <span>选择操作类型</span>
+            </div>
+          </template>
+          <el-radio-group
+            v-model="operationType"
+            size="large"
+            class="operation-type-selector"
+          >
+            <el-radio-button value="connectivity">
+              <el-icon><Connection /></el-icon>
+              <span>检测连通性</span>
+            </el-radio-button>
+            <el-radio-button value="upload">
+              <el-icon><Upload /></el-icon>
+              <span>上传文件</span>
+            </el-radio-button>
+            <el-radio-button value="replace">
+              <el-icon><RefreshRight /></el-icon>
+              <span>替换文件</span>
+            </el-radio-button>
+            <el-radio-button value="command">
+              <el-icon><Terminal /></el-icon>
+              <span>执行命令</span>
+            </el-radio-button>
+          </el-radio-group>
+
+          <!-- 操作说明 -->
+          <el-alert
+            :title="operationTypeInfo[operationType].title"
+            :type="operationTypeInfo[operationType].type"
+            :closable="false"
+            style="margin-top: 20px"
+          >
+            {{ operationTypeInfo[operationType].description }}
+          </el-alert>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <!-- 节点选择和操作执行 -->
+    <el-card shadow="hover" class="main-card" v-loading="loading">
+      <template #header>
+        <div class="card-header">
+          <span>
+            <el-icon><Monitor /></el-icon>
+            选择目标节点
+          </span>
+          <div>
+            <el-button
+              type="primary"
+              @click="executeOperation"
+              :disabled="!canExecute"
+              :loading="executing"
+            >
+              <el-icon v-if="!executing">
+                <component :is="operationTypeInfo[operationType].icon" />
+              </el-icon>
+              {{ operationTypeInfo[operationType].buttonText }}
+            </el-button>
+          </div>
+        </div>
+      </template>
+
+      <!-- 提示信息 -->
+      <el-alert
+        v-if="!selectedSpaceId"
+        title="请先选择环境空间"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 20px"
+      />
+
+      <!-- 节点列表 -->
+      <el-table
+        v-if="selectedSpaceId"
+        :data="nodes"
+        style="width: 100%"
+        @selection-change="handleSelectionChange"
+        border
+        stripe
+      >
+        <el-table-column type="selection" width="55" />
+        <el-table-column prop="name" label="节点名称" width="150" />
+        <el-table-column prop="ip_address" label="IP地址" width="150" />
+        <el-table-column prop="status" label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 'active' ? 'success' : 'info'">
+              {{ row.status === "active" ? "在线" : "离线" }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="os_type" label="操作系统" width="120" />
+        <el-table-column prop="os_version" label="系统版本" />
+        <el-table-column label="最后心跳" width="180">
+          <template #default="{ row }">
+            {{ row.last_heartbeat ? formatDateTime(row.last_heartbeat) : "-" }}
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div v-if="selectedSpaceId" class="selection-info">
+        已选择 <strong>{{ selectedNodes.length }}</strong> 个节点
+        <span v-if="selectedNodes.length > 0" class="selected-nodes">
+          ({{ selectedNodes.map((n) => n.name).join(", ") }})
+        </span>
+      </div>
+
+      <!-- 操作参数表单 -->
+      <div v-if="selectedNodes.length > 0 && needsParams" class="params-form">
+        <el-divider>操作参数</el-divider>
+
+        <!-- 上传文件参数 -->
+        <el-form
+          v-if="operationType === 'upload'"
+          :model="uploadForm"
+          label-width="120px"
+        >
+          <el-form-item label="选择文件" required>
+            <el-upload
+              ref="uploadRef"
+              :auto-upload="false"
+              :limit="1"
+              :on-change="handleFileChange"
+              :file-list="fileList"
+            >
+              <el-button type="primary">
+                <el-icon><Upload /></el-icon> 选择文件
+              </el-button>
+              <template #tip>
+                <div class="el-upload__tip">选择要上传的文件</div>
+              </template>
+            </el-upload>
+          </el-form-item>
+          <el-form-item label="远程路径" required>
+            <el-input
+              v-model="uploadForm.remotePath"
+              placeholder="例如: /tmp/myfile.txt"
+              clearable
+            >
+              <template #prepend>目标路径</template>
+            </el-input>
+          </el-form-item>
+        </el-form>
+
+        <!-- 替换文件参数 -->
+        <el-form
+          v-if="operationType === 'replace'"
+          :model="replaceForm"
+          label-width="120px"
+        >
+          <el-form-item label="选择文件" required>
+            <el-upload
+              ref="replaceUploadRef"
+              :auto-upload="false"
+              :limit="1"
+              :on-change="handleReplaceFileChange"
+              :file-list="replaceFileList"
+            >
+              <el-button type="primary">
+                <el-icon><Upload /></el-icon> 选择文件
+              </el-button>
+              <template #tip>
+                <div class="el-upload__tip">选择用于替换的文件</div>
+              </template>
+            </el-upload>
+          </el-form-item>
+          <el-form-item label="远程路径" required>
+            <el-input
+              v-model="replaceForm.remotePath"
+              placeholder="例如: /etc/config.conf"
+              clearable
+            >
+              <template #prepend>目标文件</template>
+            </el-input>
+          </el-form-item>
+          <el-form-item label="备份原文件">
+            <el-switch v-model="replaceForm.backup" />
+            <span class="form-tip">原文件将备份为 .backup.时间戳</span>
+          </el-form-item>
+        </el-form>
+
+        <!-- 执行命令参数 -->
+        <el-form
+          v-if="operationType === 'command'"
+          :model="commandForm"
+          label-width="120px"
+        >
+          <el-form-item label="Shell命令" required>
+            <el-input
+              v-model="commandForm.command"
+              type="textarea"
+              :rows="4"
+              placeholder="输入要执行的Shell命令，例如: &#10;  ls -la /tmp&#10;  df -h&#10;  free -m"
+              clearable
+            />
+          </el-form-item>
+          <el-form-item>
+            <el-tag type="warning" size="small">
+              <el-icon><Warning /></el-icon>
+              命令将在所有选中节点上执行，请谨慎操作
+            </el-tag>
+          </el-form-item>
+        </el-form>
+      </div>
+    </el-card>
+
+    <!-- 执行结果 -->
+    <el-card
+      v-if="operationResults.length > 0"
+      shadow="hover"
+      class="result-card"
+    >
+      <template #header>
+        <div class="card-header">
+          <span>
+            <el-icon><DocumentChecked /></el-icon>
+            操作结果
+          </span>
+          <div>
+            <el-button size="small" @click="clearResults">清空结果</el-button>
+          </div>
+        </div>
+      </template>
+
+      <!-- 结果统计 -->
+      <div class="result-summary">
+        <el-statistic
+          title="总计"
+          :value="operationResults.length"
+          suffix="个节点"
+        >
+          <template #prefix>
+            <el-icon><Monitor /></el-icon>
+          </template>
+        </el-statistic>
+        <el-statistic title="成功" :value="successCount" suffix="个">
+          <template #prefix>
+            <el-icon color="#67C23A"><CircleCheck /></el-icon>
+          </template>
+        </el-statistic>
+        <el-statistic title="失败" :value="failedCount" suffix="个">
+          <template #prefix>
+            <el-icon color="#F56C6C"><CircleClose /></el-icon>
+          </template>
+        </el-statistic>
+      </div>
+
+      <!-- 结果详情表格 -->
+      <el-table
+        :data="operationResults"
+        style="width: 100%; margin-top: 20px"
+        border
+      >
+        <el-table-column prop="node_name" label="节点名称" width="150" />
+        <el-table-column label="执行状态" width="120">
+          <template #default="{ row }">
+            <el-tag
+              :type="row.success || row.connected ? 'success' : 'danger'"
+            >
+              {{ getResultStatus(row) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="详细信息">
+          <template #default="{ row }">
+            <div class="result-detail">
+              <div class="result-message">{{ row.message }}</div>
+
+              <!-- 命令输出 -->
+              <div v-if="row.output" class="command-output">
+                <el-divider content-position="left">
+                  <el-icon><DocumentCopy /></el-icon>
+                  命令输出
+                </el-divider>
+                <pre>{{ row.output }}</pre>
+              </div>
+
+              <!-- 文件信息 -->
+              <div v-if="row.file_size" class="file-info">
+                <el-tag size="small" type="info">
+                  文件大小: {{ formatFileSize(row.file_size) }}
+                </el-tag>
+              </div>
+
+              <!-- 备份信息 -->
+              <div v-if="row.backup_path" class="backup-info">
+                <el-tag size="small" type="success">
+                  <el-icon><FolderOpened /></el-icon>
+                  备份: {{ row.backup_path }}
+                </el-tag>
+              </div>
+
+              <!-- 退出码 -->
+              <div v-if="row.exit_code !== undefined" class="exit-code">
+                <el-tag
+                  size="small"
+                  :type="row.exit_code === 0 ? 'success' : 'danger'"
+                >
+                  退出码: {{ row.exit_code }}
+                </el-tag>
+              </div>
+
+              <!-- 执行时间 -->
+              <div
+                v-if="
+                  row.executed_at ||
+                  row.checked_at ||
+                  row.uploaded_at ||
+                  row.replaced_at
+                "
+                class="exec-time"
+              >
+                <el-tag size="small" type="info">
+                  <el-icon><Clock /></el-icon>
+                  {{
+                    formatDateTime(
+                      row.executed_at ||
+                        row.checked_at ||
+                        row.uploaded_at ||
+                        row.replaced_at
+                    )
+                  }}
+                </el-tag>
+              </div>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-card>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted } from "vue";
+import { ElMessage, ElMessageBox } from "element-plus";
+import {
+  OfficeBuilding,
+  Operation,
+  Connection,
+  Upload,
+  RefreshRight,
+  Terminal,
+  Monitor,
+  CircleCheck,
+  CircleClose,
+  Warning,
+  DocumentChecked,
+  DocumentCopy,
+  FolderOpened,
+  Clock,
+} from "@element-plus/icons-vue";
+import environmentSpacesApi from "@/api/environmentSpaces";
+import nodeOperationsApi from "@/api/nodeOperations";
+
+// 数据
+const spaces = ref([]);
+const selectedSpaceId = ref(null);
+const selectedSpace = ref(null);
+const nodes = ref([]);
+const selectedNodes = ref([]);
+const loading = ref(false);
+
+// 操作类型
+const operationType = ref("connectivity");
+
+// 操作类型信息
+const operationTypeInfo = {
+  connectivity: {
+    title: "连通性检测",
+    type: "info",
+    description: "检测选中节点的网络连通性和SSH连接状态",
+    icon: Connection,
+    buttonText: "开始检测",
+  },
+  upload: {
+    title: "上传文件",
+    type: "success",
+    description: "将本地文件上传到选中节点的指定路径",
+    icon: Upload,
+    buttonText: "开始上传",
+  },
+  replace: {
+    title: "替换文件",
+    type: "warning",
+    description: "替换选中节点上的文件，可选择是否备份原文件",
+    icon: RefreshRight,
+    buttonText: "开始替换",
+  },
+  command: {
+    title: "执行Shell命令",
+    type: "danger",
+    description: "在选中节点上批量执行Shell命令",
+    icon: Terminal,
+    buttonText: "执行命令",
+  },
+};
+
+// 表单数据
+const uploadForm = ref({
+  remotePath: "",
+  file: null,
+});
+const fileList = ref([]);
+const uploadRef = ref(null);
+
+const replaceForm = ref({
+  remotePath: "",
+  backup: true,
+  file: null,
+});
+const replaceFileList = ref([]);
+const replaceUploadRef = ref(null);
+
+const commandForm = ref({
+  command: "",
+});
+
+// 执行状态
+const executing = ref(false);
+const operationResults = ref([]);
+
+// 计算属性
+const needsParams = computed(() => {
+  return operationType.value !== "connectivity";
+});
+
+const canExecute = computed(() => {
+  if (!selectedSpaceId.value || selectedNodes.value.length === 0) {
+    return false;
+  }
+
+  if (operationType.value === "upload") {
+    return uploadForm.value.file && uploadForm.value.remotePath;
+  }
+
+  if (operationType.value === "replace") {
+    return replaceForm.value.file && replaceForm.value.remotePath;
+  }
+
+  if (operationType.value === "command") {
+    return commandForm.value.command.trim().length > 0;
+  }
+
+  return true; // connectivity
+});
+
+const successCount = computed(() => {
+  return operationResults.value.filter((r) => r.success || r.connected).length;
+});
+
+const failedCount = computed(() => {
+  return operationResults.value.filter((r) => !r.success && !r.connected)
+    .length;
+});
+
+// 方法：加载环境空间列表
+const loadSpaces = async () => {
+  try {
+    const response = await environmentSpacesApi.getEnvironmentSpaces();
+    spaces.value = response.data;
+  } catch (error) {
+    ElMessage.error("加载环境空间列表失败: " + error.message);
+  }
+};
+
+// 方法：环境空间变化
+const handleSpaceChange = async (spaceId) => {
+  selectedSpace.value = spaces.value.find((s) => s.id === spaceId);
+  selectedNodes.value = [];
+  await loadNodes();
+};
+
+// 方法：加载节点列表
+const loadNodes = async () => {
+  if (!selectedSpaceId.value) {
+    nodes.value = [];
+    return;
+  }
+
+  loading.value = true;
+  try {
+    const response = await environmentSpacesApi.getEnvironmentSpaceNodes(
+      selectedSpaceId.value
+    );
+    nodes.value = response.data;
+  } catch (error) {
+    ElMessage.error("加载节点列表失败: " + error.message);
+  } finally {
+    loading.value = false;
+  }
+};
+
+// 方法：处理节点选择
+const handleSelectionChange = (selection) => {
+  selectedNodes.value = selection;
+};
+
+// 方法：文件选择
+const handleFileChange = (file) => {
+  uploadForm.value.file = file.raw;
+};
+
+const handleReplaceFileChange = (file) => {
+  replaceForm.value.file = file.raw;
+};
+
+// 方法：执行操作
+const executeOperation = async () => {
+  const nodeIds = selectedNodes.value.map((n) => n.id);
+
+  // 二次确认（命令执行和文件替换）
+  if (operationType.value === "command" || operationType.value === "replace") {
+    try {
+      await ElMessageBox.confirm(
+        `确定要在 ${selectedNodes.value.length} 个节点上执行${
+          operationType.value === "command" ? "命令" : "文件替换"
+        }操作吗？`,
+        "操作确认",
+        {
+          confirmButtonText: "确定执行",
+          cancelButtonText: "取消",
+          type: "warning",
+        }
+      );
+    } catch {
+      return;
+    }
+  }
+
+  executing.value = true;
+  operationResults.value = [];
+
+  try {
+    let response;
+
+    switch (operationType.value) {
+      case "connectivity":
+        response = await nodeOperationsApi.checkConnectivity(nodeIds);
+        break;
+
+      case "upload":
+        response = await nodeOperationsApi.uploadFile(
+          nodeIds,
+          uploadForm.value.remotePath,
+          uploadForm.value.file
+        );
+        break;
+
+      case "replace":
+        response = await nodeOperationsApi.replaceFile(
+          nodeIds,
+          replaceForm.value.remotePath,
+          replaceForm.value.file,
+          replaceForm.value.backup
+        );
+        break;
+
+      case "command":
+        response = await nodeOperationsApi.executeCommand(
+          nodeIds,
+          commandForm.value.command
+        );
+        break;
+    }
+
+    operationResults.value = response.data;
+    ElMessage.success(response.message || "操作完成");
+  } catch (error) {
+    ElMessage.error("操作失败: " + error.message);
+  } finally {
+    executing.value = false;
+  }
+};
+
+// 方法：清空结果
+const clearResults = () => {
+  operationResults.value = [];
+};
+
+// 方法：获取结果状态
+const getResultStatus = (row) => {
+  if (operationType.value === "connectivity") {
+    return row.connected ? "连通" : "不可达";
+  }
+  return row.success ? "成功" : "失败";
+};
+
+// 方法：格式化时间
+const formatDateTime = (dateString) => {
+  if (!dateString) return "-";
+  const date = new Date(dateString);
+  return date.toLocaleString("zh-CN");
+};
+
+// 方法：格式化文件大小
+const formatFileSize = (bytes) => {
+  if (!bytes) return "-";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return (bytes / Math.pow(k, i)).toFixed(2) + " " + sizes[i];
+};
+
+// 初始化
+onMounted(() => {
+  loadSpaces();
+});
+</script>
+
+<style scoped>
+.node-operations-container {
+  padding: 20px;
+}
+
+.page-header {
+  margin-bottom: 30px;
+  text-align: center;
+}
+
+.page-header h2 {
+  margin: 0;
+  font-size: 28px;
+  color: #303133;
+}
+
+.subtitle {
+  margin: 10px 0 0 0;
+  color: #909399;
+  font-size: 14px;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.card-header > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.space-info {
+  margin-top: 20px;
+}
+
+.operation-type-selector {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.operation-type-selector .el-radio-button {
+  width: 100%;
+}
+
+.operation-type-selector :deep(.el-radio-button__inner) {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+}
+
+.main-card {
+  margin-top: 20px;
+}
+
+.selection-info {
+  margin-top: 20px;
+  padding: 12px;
+  background: #f4f4f5;
+  border-radius: 4px;
+  text-align: center;
+}
+
+.selected-nodes {
+  color: #409eff;
+  font-size: 14px;
+  margin-left: 8px;
+}
+
+.params-form {
+  margin-top: 20px;
+  padding: 20px;
+  background: #f9fafc;
+  border-radius: 8px;
+}
+
+.form-tip {
+  margin-left: 12px;
+  color: #909399;
+  font-size: 12px;
+}
+
+.result-card {
+  margin-top: 20px;
+}
+
+.result-summary {
+  display: flex;
+  justify-content: space-around;
+  padding: 20px;
+  background: #f4f4f5;
+  border-radius: 8px;
+}
+
+.result-detail {
+  font-size: 14px;
+}
+
+.result-message {
+  margin-bottom: 8px;
+}
+
+.command-output {
+  margin-top: 12px;
+}
+
+.command-output pre {
+  background: #f4f4f5;
+  padding: 12px;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 8px 0;
+}
+
+.file-info,
+.backup-info,
+.exit-code,
+.exec-time {
+  margin-top: 8px;
+}
+
+.file-info .el-tag,
+.backup-info .el-tag,
+.exit-code .el-tag,
+.exec-time .el-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+</style>

@@ -1,4 +1,3 @@
-
 create table monitor
 (
     id   int auto_increment
