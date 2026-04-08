@@ -6,13 +6,16 @@ from loguru import logger
 
 class SSHClient:
     """SSH客户端"""
-    
+
     def __init__(self, login_credential, hostname=None):
         self.login_credential = login_credential
         self.client = None
         self.connected = False
         self._private_key_file = None
         self._hostname = hostname or login_credential.host
+        # OS适配器相关
+        self._os_info = None
+        self._os_adapter = None
     
     def connect(self, timeout=30):
         """建立SSH连接"""
@@ -191,13 +194,65 @@ class SSHClient:
                 success, output = self.execute_command(command)
                 if success:
                     system_info[key] = output.strip()
-            
+
             return system_info
-            
+
         except Exception as e:
             logger.error(f"Failed to get system info: {e}")
             return None
-    
+
+    def detect_os(self):
+        """
+        检测远程系统操作系统类型和版本
+
+        Returns:
+            OSInfo对象
+        """
+        if self._os_info is None:
+            try:
+                from app.utils.os_adapter import OSInfoDetector
+                self._os_info = OSInfoDetector.detect(self)
+                if self._os_info:
+                    logger.info(f"检测到操作系统: {self._os_info}")
+                else:
+                    logger.warning("无法检测操作系统，使用默认值")
+            except Exception as e:
+                logger.error(f"检测操作系统失败: {e}")
+                # 返回默认值
+                from app.utils.os_adapter import OSInfo
+                self._os_info = OSInfo(
+                    name='unknown',
+                    version='unknown',
+                    version_major='unknown',
+                    family='unknown',
+                    arch='unknown',
+                    has_systemd=True,
+                    has_dnf=False,
+                    has_yum=True,
+                    has_zypper=False,
+                    has_apt=False,
+                )
+        return self._os_info
+
+    def get_os_adapter(self):
+        """
+        获取操作系统适配器
+
+        Returns:
+            BaseOSAdapter子类实例
+        """
+        if self._os_adapter is None:
+            os_info = self.detect_os()
+            try:
+                from app.utils.os_adapter import OSAdapterFactory
+                self._os_adapter = OSAdapterFactory.create(os_info, self)
+                logger.info(f"创建OS适配器: {self._os_adapter.__class__.__name__}")
+            except Exception as e:
+                logger.error(f"创建OS适配器失败: {e}")
+                from app.utils.os_adapter import EulerOSAdapter
+                self._os_adapter = EulerOSAdapter(os_info, self)
+        return self._os_adapter
+
     def check_disk_space(self, path='/tmp'):
         """检查磁盘空间"""
         command = f'df -B1 {path} | tail -1'

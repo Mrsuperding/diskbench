@@ -490,15 +490,20 @@ def process_io_test_case(ssh_client, task_id, execution_id, node, io_test_case, 
             logging.info(f"收集运行日志: task_id={task_id}, node_id={node.id}, case_id={io_test_case.id}")
             # 收集系统日志和fio日志
             log_file = f'/tmp/io_test_logs_{task_id}_{execution_id}_{node.id}_{io_test_case.id}.log'
-            
+
             # 创建日志文件
             ssh_client.execute_command(f'touch {log_file}')
-            
+
+            # 使用OS适配器获取正确的命令
+            os_adapter = ssh_client.get_os_adapter()
+
             # 收集dmesg日志
-            ssh_client.execute_command(f'dmesg -T | tail -200 >> {log_file}')
-            
+            dmesg_cmd = os_adapter.get_dmesg_cmd(200)
+            ssh_client.execute_command(f'{dmesg_cmd} >> {log_file}')
+
             # 收集系统日志
-            ssh_client.execute_command(f'journalctl -n 200 >> {log_file}')
+            log_cmd = os_adapter.get_system_log_cmd(200)
+            ssh_client.execute_command(f'{log_cmd} >> {log_file}')
             
             # 收集fio测试输出
             ssh_client.execute_command(f'echo "===== FIO TEST OUTPUT =====" >> {log_file}')
