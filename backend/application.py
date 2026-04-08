@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta
 from flask import Flask, jsonify
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
@@ -154,8 +155,19 @@ scheduler = BackgroundScheduler()
 
 def collect_all_metrics():
     """定时任务：采集所有环境空间内节点的指标"""
+    import signal
     from app.models.environment_space import EnvironmentSpace
+    from app.models.node import Node
     from app.services.metric_collector import MetricCollector
+    from app.models.system_metric import SystemMetric
+
+    # 超时控制：25秒后强制终止
+    def timeout_handler(signum, frame):
+        raise TimeoutError("采集任务超时（超过25秒）")
+
+    # 设置超时信号
+    signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(25)  # 25秒超时
 
     with app.app_context():
         try:
@@ -164,6 +176,9 @@ def collect_all_metrics():
             app.logger.info(f'开始采集 {len(spaces)} 个环境空间的监控指标')
 
             total_nodes = 0
+            success_count = 0
+            failed_count = 0
+
             for space in spaces:
                 # 采集该环境空间内的所有节点
                 nodes = space.nodes
@@ -172,21 +187,36 @@ def collect_all_metrics():
                 for node in nodes:
                     try:
                         metrics = MetricCollector.collect_node_metrics(node.id)
-                        MetricCollector.save_metrics(node.id, metrics)
 
-                        # 根据连通性更新节点状态
-                        if not metrics.get('is_connected'):
-                            node.status = 'inactive'
-                        else:
-                            node.status = 'active'
-                        db.session.commit()
+                        # 使用封装的批量插入方法
+                        inserted = SystemMetric.bulk_insert_system_metrics(node.id, metrics)
 
+                        # 更新节点状态
+                        node_status = 'active' if metrics.get('is_connected') else 'inactive'
+                        node.status = node_status
+
+                        success_count += 1
+                    except TimeoutError:
+                        app.logger.error(f'采集任务超时，停止执行')
+                        db.session.rollback()
+                        return
                     except Exception as e:
                         app.logger.error(f'采集节点 {node.id} ({node.name}) 指标失败: {e}')
+                        failed_count += 1
 
-            app.logger.info(f'指标采集完成: {len(spaces)} 个环境空间, {total_nodes} 个节点')
+            # 统一提交
+            db.session.commit()
+
+            app.logger.info(f'指标采集完成: {len(spaces)} 个环境空间, {total_nodes} 个节点, 成功 {success_count}, 失败 {failed_count}')
+
+        except TimeoutError:
+            app.logger.error('采集任务执行超时')
+            db.session.rollback()
         except Exception as e:
             app.logger.error(f'采集任务执行失败: {e}')
+            db.session.rollback()
+        finally:
+            signal.alarm(0)  # 取消超时信号
 
 
 def cleanup_old_metrics():
@@ -196,7 +226,7 @@ def cleanup_old_metrics():
     with app.app_context():
         try:
             # 计算一周前的时间
-            one_week_ago = datetime.utcnow() - timedelta(days=7)
+            one_week_ago = datetime.now(timezone.utc) - timedelta(days=7)
 
             # 删除一周前的数据
             deleted = SystemMetric.query.filter(

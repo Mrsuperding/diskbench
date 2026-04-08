@@ -1,7 +1,12 @@
-"""指标采集服务"""
+"""指标采集服务
+
+注意：本模块仅负责采集指标数据，保存逻辑已移至 SystemMetric 模型的批量方法。
+推荐使用：
+- SystemMetric.bulk_insert_system_metrics() 保存系统指标
+- SystemMetric.bulk_insert_partition_metrics() 保存分区指标
+"""
 
 import random
-from datetime import datetime
 
 
 class MetricCollector:
@@ -35,77 +40,37 @@ class MetricCollector:
         }
 
     @staticmethod
-    def save_metrics(node_id, metrics):
+    def collect_partition_metrics(node_id, partitions):
         """
-        保存指标到SystemMetric表
+        采集节点分区指标（秒级粒度）
 
         Args:
             node_id: 节点ID
-            metrics: 指标字典，包含 metric_name: value
-        """
-        from app.models.system_metric import SystemMetric
-        from app.models import db
-
-        for metric_name, value in metrics.items():
-            # 将is_connected布尔值转为0.0或1.0
-            if metric_name == 'is_connected':
-                value = 1.0 if value else 0.0
-                unit = None
-                # 保存单个指标
-                metric = SystemMetric(
-                    node_id=node_id,
-                    metric_type='system',
-                    metric_name=metric_name,
-                    metric_value=value,
-                    metric_unit=unit,
-                    collection_time=datetime.utcnow()
-                )
-                db.session.add(metric)
-
-            # load_average 拆分成3个独立指标
-            elif metric_name == 'load_average' and isinstance(value, list) and len(value) >= 3:
-                for i, load_val in enumerate(value[:3]):
-                    load_metric = SystemMetric(
-                        node_id=node_id,
-                        metric_type='system',
-                        metric_name=f'load_average_{["1min", "5min", "15min"][i]}',
-                        metric_value=float(load_val),
-                        metric_unit=None,
-                        collection_time=datetime.utcnow()
-                    )
-                    db.session.add(load_metric)
-
-            else:
-                # 其他指标直接保存
-                unit = None
-                if 'usage' in metric_name:
-                    unit = '%'
-                elif metric_name in ['network_tx', 'network_rx']:
-                    unit = 'B/s'
-
-                metric = SystemMetric(
-                    node_id=node_id,
-                    metric_type='system',
-                    metric_name=metric_name,
-                    metric_value=float(value),
-                    metric_unit=unit,
-                    collection_time=datetime.utcnow()
-                )
-                db.session.add(metric)
-
-        db.session.commit()
-
-    @staticmethod
-    def collect_and_save(node_id):
-        """
-        采集并保存节点指标（组合方法）
-
-        Args:
-            node_id: 节点ID
+            partitions: 分区列表，可以是字符串列表或字典列表
 
         Returns:
-            dict: 采集到的指标数据
+            dict: 键为分区名称，值为该分区的监控指标
         """
-        metrics = MetricCollector.collect_node_metrics(node_id)
-        MetricCollector.save_metrics(node_id, metrics)
-        return metrics
+        partition_metrics = {}
+
+        for partition in partitions:
+            # 解析分区名称
+            if isinstance(partition, dict) and 'path' in partition:
+                partition_name = partition['path']
+            else:
+                partition_name = str(partition)
+
+            partition_name = partition_name.strip()
+
+            # 模拟分区IO指标数据（秒级粒度）
+            partition_metrics[partition_name] = {
+                'read_iops': round(random.uniform(100, 5000), 2),      # 读取IOPS
+                'write_iops': round(random.uniform(100, 5000), 2),   # 写入IOPS
+                'read_throughput': round(random.uniform(1024 * 1024, 1024 * 1024 * 200), 2),  # 读取吞吐量 B/s
+                'write_throughput': round(random.uniform(1024 * 1024, 1024 * 1024 * 200), 2), # 写入吞吐量 B/s
+                'read_latency': round(random.uniform(0.1, 10.0), 3),   # 读取延迟 ms
+                'write_latency': round(random.uniform(0.1, 10.0), 3),  # 写入延迟 ms
+                'utilization': round(random.uniform(5, 95), 2),      # 分区利用率 %
+            }
+
+        return partition_metrics

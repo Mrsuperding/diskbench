@@ -25,6 +25,8 @@ task_node_association = db.Table('task_node_association',
 # 导入模型
 from .user import User
 from .login_credential import LoginCredential
+from .environment_space import EnvironmentSpace
+from .monitoring_config import MonitoringConfig
 from .node import Node, NodeStatusHistory
 from .io_test_case import IOTestCase, TestCaseTemplate
 from .test_task import TestTask, TaskExecution
@@ -39,6 +41,8 @@ __all__ = [
     'db',
     'User',
     'LoginCredential',
+    'EnvironmentSpace',
+    'MonitoringConfig',
     'Node',
     'NodeStatusHistory',
     'IOTestCase',

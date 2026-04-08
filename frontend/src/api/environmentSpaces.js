@@ -63,4 +63,19 @@ export default {
   collectMetrics(spaceId) {
     return request.post(`/environment-spaces/${spaceId}/metrics/collect`);
   },
+
+  // 分区监控数据
+  getPartitionRealtimeMetrics(spaceId) {
+    return request.get(`/environment-spaces/${spaceId}/metrics/partition/realtime`);
+  },
+
+  getPartitionHistoryMetrics(spaceId, params) {
+    return request.get(`/environment-spaces/${spaceId}/metrics/partition/history`, {
+      params,
+    });
+  },
+
+  collectPartitionMetrics(spaceId) {
+    return request.post(`/environment-spaces/${spaceId}/metrics/partition/collect`);
+  },
 };

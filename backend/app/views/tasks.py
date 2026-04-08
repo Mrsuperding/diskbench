@@ -134,9 +134,11 @@ def run_task_execution(task_id, execution_id, app, execution_mode='restart'):
                 # 并行执行
                 logging.info("使用并行模式执行节点任务")
                 from concurrent.futures import ThreadPoolExecutor, as_completed
-                
-                # 限制并发数，最多同时执行3个节点
-                max_workers = min(3, len(nodes))
+
+                # 根据连接池配置计算最大并发数
+                # pool_size(30) + max_overflow(30) = 60 最大连接
+                # 每个节点约需 3-4 个连接，安全值 = 60 / 4 = 15
+                max_workers = min(15, len(nodes))
                 logging.info(f"最大并发数: {max_workers}")
                 
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:

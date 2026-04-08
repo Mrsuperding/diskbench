@@ -11,10 +11,15 @@ logs_bp = Blueprint('logs', __name__)
 def get_iostat_metrics(log_id):
     """获取IOSTAT指标数据"""
     try:
+        # 先检查日志是否存在
+        log = TestLog.query.get(log_id)
+        if not log:
+            return error_response('日志不存在', 404)
+
         # 获取查询参数
         start_time = request.args.get('start_time')
         end_time = request.args.get('end_time')
-        
+
         # 查询IOSTAT指标
         query = IOStatMetric.query.filter_by(test_log_id=log_id)
         
@@ -48,9 +53,14 @@ def get_iostat_metrics(log_id):
 def get_jitter(log_id):
     """获取性能抖动数据"""
     try:
+        # 先检查日志是否存在
+        log = TestLog.query.get(log_id)
+        if not log:
+            return error_response('日志不存在', 404)
+
         # 获取查询参数
         metric_type = request.args.get('metric_type', 'iops')
-        
+
         # 调用日志收集器获取性能抖动数据
         jitter_data = log_collector.get_performance_jitter(log_id, metric_type)
         
@@ -190,6 +200,11 @@ def download_log(log_id):
 def get_iostat_jitter(log_id):
     """获取IOSTAT指标的抖动计算结果"""
     try:
+        # 先检查日志是否存在
+        log = TestLog.query.get(log_id)
+        if not log:
+            return error_response('日志不存在', 404)
+
         # 获取iostat指标
         metrics = IOStatMetric.query.filter_by(test_log_id=log_id).order_by(IOStatMetric.collection_time).all()
         metrics_dict = [metric.to_dict() for metric in metrics]

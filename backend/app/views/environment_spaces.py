@@ -2,7 +2,7 @@
 
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.models import db
 from app.models.environment_space import EnvironmentSpace
@@ -288,7 +288,7 @@ def get_environment_history_metrics(space_id):
 
         # 获取查询参数
         hours = request.args.get('hours', 1, type=int)  # 默认最近1小时
-        end_time = datetime.utcnow()
+        end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(hours=hours)
 
         # 获取环境内所有节点的历史数据
@@ -335,26 +335,225 @@ def collect_space_metrics(space_id):
             return error_response('环境空间不存在', 404)
 
         from app.services.metric_collector import MetricCollector
+        from app.models.system_metric import SystemMetric
 
         success_count = 0
         failed_count = 0
+        failed_nodes = []
         nodes = space.nodes
 
         for node in nodes:
             try:
                 metrics = MetricCollector.collect_node_metrics(node.id)
-                MetricCollector.save_metrics(node.id, metrics)
+                inserted = SystemMetric.bulk_insert_system_metrics(node.id, metrics)
                 success_count += 1
             except Exception as e:
                 failed_count += 1
-                print(f'采集节点 {node.id} 指标失败: {e}')
+                failed_nodes.append({
+                    'node_id': node.id,
+                    'node_name': node.name,
+                    'error': str(e)
+                })
 
-        return success_response({
+        # 统一提交
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return error_response(f'批量插入失败: {str(e)}', 500)
+
+        result = {
             'total': len(nodes),
             'success': success_count,
-            'failed': failed_count
-        }, f'采集完成: 成功 {success_count}, 失败 {failed_count}')
+            'failed': failed_count,
+            'total_inserted': success_count * 10  # 估算每节点约10条指标
+        }
+        if failed_nodes:
+            result['failed_nodes'] = failed_nodes
+
+        return success_response(result, f'采集完成: 成功 {success_count}, 失败 {failed_count}')
     except Exception as e:
         db.session.rollback()
         return error_response(f'采集监控数据失败: {str(e)}', 500)
+
+
+@environment_spaces_bp.route('/<int:space_id>/metrics/partition/realtime', methods=['GET'])
+@jwt_required()
+def get_partition_realtime_metrics(space_id):
+    """获取环境空间内所有节点的分区实时指标（秒级）"""
+    try:
+        space = EnvironmentSpace.query.get(space_id)
+        if not space:
+            return error_response('环境空间不存在', 404)
+
+        realtime_data = []
+        for node in space.nodes:
+            if not node.io_partitions or len(node.io_partitions) == 0:
+                continue
+
+            # 获取节点最新分区指标
+            latest_partition_metrics = {}
+            for partition in node.io_partitions:
+                # 解析分区名称
+                if isinstance(partition, dict) and 'path' in partition:
+                    partition_name = partition['path']
+                else:
+                    partition_name = str(partition)
+
+                partition_name = partition_name.strip()
+
+                # 获取该分区最新指标
+                partition_metric_names = ['read_iops', 'write_iops', 'read_throughput',
+                                        'write_throughput', 'read_latency', 'write_latency',
+                                        'utilization']
+                for metric_name in partition_metric_names:
+                    metric = SystemMetric.query.filter_by(
+                        node_id=node.id,
+                        partition_name=partition_name,
+                        metric_name=metric_name
+                    ).order_by(SystemMetric.collection_time.desc()).first()
+
+                    if metric:
+                        if partition_name not in latest_partition_metrics:
+                            latest_partition_metrics[partition_name] = {}
+                        latest_partition_metrics[partition_name][metric_name] = {
+                            'value': metric.metric_value,
+                            'unit': metric.metric_unit,
+                            'time': metric.collection_time.isoformat()
+                        }
+
+            if latest_partition_metrics:
+                realtime_data.append({
+                    'node_id': node.id,
+                    'node_name': node.name,
+                    'partitions': latest_partition_metrics
+                })
+
+        return success_response(realtime_data)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return error_response(f'获取分区实时指标失败: {str(e)}', 500)
+
+
+@environment_spaces_bp.route('/<int:space_id>/metrics/partition/history', methods=['GET'])
+@jwt_required()
+def get_partition_history_metrics(space_id):
+    """获取环境空间内所有节点的分区历史指标"""
+    try:
+        space = EnvironmentSpace.query.get(space_id)
+        if not space:
+            return error_response('环境空间不存在', 404)
+
+        # 获取查询参数
+        hours = request.args.get('hours', 1, type=int)  # 默认最近1小时
+        partition_filter = request.args.get('partition', None, type=str)  # 可选分区名称过滤
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(hours=hours)
+
+        # 获取环境内所有节点分区历史数据
+        query = db.session.query(SystemMetric).join(Node).filter(
+            Node.environment_space_id == space_id,
+            SystemMetric.collection_time >= start_time,
+            SystemMetric.collection_time <= end_time,
+            SystemMetric.partition_name != None
+        )
+
+        if partition_filter:
+            query = query.filter(SystemMetric.partition_name == partition_filter)
+
+        metrics = query.order_by(SystemMetric.collection_time.asc()).all()
+
+        # 按节点和分区组织数据
+        history_data = {}
+        for metric in metrics:
+            node_key = f"node_{metric.node_id}"
+            if node_key not in history_data:
+                node = Node.query.get(metric.node_id)
+                history_data[node_key] = {
+                    'node_id': metric.node_id,
+                    'node_name': node.name if node else f'Unknown-{metric.node_id}',
+                    'partitions': {}
+                }
+
+            partition_key = metric.partition_name
+            if partition_key not in history_data[node_key]['partitions']:
+                history_data[node_key]['partitions'][partition_key] = {}
+
+            metric_name = metric.metric_name
+            if metric_name not in history_data[node_key]['partitions'][partition_key]:
+                history_data[node_key]['partitions'][partition_key][metric_name] = []
+
+            history_data[node_key]['partitions'][partition_key][metric_name].append({
+                'value': metric.metric_value,
+                'unit': metric.metric_unit,
+                'time': metric.collection_time.isoformat()
+            })
+
+        return success_response(list(history_data.values()))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return error_response(f'获取分区历史指标失败: {str(e)}', 500)
+
+
+@environment_spaces_bp.route('/<int:space_id>/metrics/partition/collect', methods=['POST'])
+@jwt_required()
+def collect_partition_metrics(space_id):
+    """手动触发环境空间内所有节点分区监控数据采集（秒级粒度）"""
+    try:
+        space = EnvironmentSpace.query.get(space_id)
+        if not space:
+            return error_response('环境空间不存在', 404)
+
+        from app.services.metric_collector import MetricCollector
+        from app.models.system_metric import SystemMetric
+
+        success_count = 0
+        failed_count = 0
+        skipped_count = 0
+        failed_nodes = []
+        nodes = space.nodes
+
+        for node in nodes:
+            try:
+                # 检查节点是否有分区配置
+                if not node.io_partitions or len(node.io_partitions) == 0:
+                    skipped_count += 1
+                    continue
+
+                # 采集分区指标
+                partition_metrics = MetricCollector.collect_partition_metrics(node.id, node.io_partitions)
+
+                # 使用封装的批量插入方法
+                inserted = SystemMetric.bulk_insert_partition_metrics(node.id, partition_metrics)
+                success_count += 1
+            except Exception as e:
+                failed_count += 1
+                failed_nodes.append({
+                    'node_id': node.id,
+                    'node_name': node.name,
+                    'error': str(e)
+                })
+
+        # 统一提交
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return error_response(f'批量插入失败: {str(e)}', 500)
+
+        result = {
+            'total': len(nodes),
+            'success': success_count,
+            'failed': failed_count,
+            'skipped': skipped_count
+        }
+        if failed_nodes:
+            result['failed_nodes'] = failed_nodes
+
+        return success_response(result, f'分区指标采集完成: 成功 {success_count}, 失败 {failed_count}, 跳过(无分区) {skipped_count}')
+    except Exception as e:
+        db.session.rollback()
+        return error_response(f'采集分区监控数据失败: {str(e)}', 500)
 

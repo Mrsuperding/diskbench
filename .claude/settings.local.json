@@ -53,7 +53,9 @@
       "Bash(lsof -ti:5003)",
       "Bash(xargs kill:*)",
       "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmcmVzaCI6ZmFsc2UsImlhdCI6MTc3NDYxNzIyOSwianRpIjoiMDZlYmExMzEtNTYxYS00ZGJlLWExYzItNTdhYmYzN2E1ZTg4IiwidHlwZSI6ImFjY2VzcyIsInN1YiI6MywibmJmIjoxNzc0NjE3MjI5LCJleHAiOjE3NzQ3MDM2Mjl9.I586qGrh2ayk7pz7wJp-6QsLy-wdZEX7BpD8zQg_B6I\" curl -X POST http://localhost:5003/api/node-operations/check-connectivity -H \"Content-Type: application/json\" -H \"Authorization: Bearer $TOKEN\" -d '{\"\"\"\"node_ids\"\"\"\": [1, 2]}')",
-      "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmcmVzaCI6ZmFsc2UsImlhdCI6MTc3NDYxNzIyOSwianRpIjoiMDZlYmExMzEtNTYxYS00ZGJlLWExYzItNTdhYmYzN2E1ZTg4IiwidHlwZSI6ImFjY2VzcyIsInN1YiI6MywibmJmIjoxNzc0NjE3MjI5LCJleHAiOjE3NzQ3MDM2Mjl9.I586qGrh2ayk7pz7wJp-6QsLy-wdZEX7BpD8zQg_B6I\")"
+      "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmcmVzaCI6ZmFsc2UsImlhdCI6MTc3NDYxNzIyOSwianRpIjoiMDZlYmExMzEtNTYxYS00ZGJlLWExYzItNTdhYmYzN2E1ZTg4IiwidHlwZSI6ImFjY2VzcyIsInN1YiI6MywibmJmIjoxNzc0NjE3MjI5LCJleHAiOjE3NzQ3MDM2Mjl9.I586qGrh2ayk7pz7wJp-6QsLy-wdZEX7BpD8zQg_B6I\")",
+      "Bash(mysql -u root -p123456 -e \"USE io_platform; DESCRIBE system_metrics;\")",
+      "Bash(mysql -u root -p123456 -e ':*)"
     ]
   }
 }

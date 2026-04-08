@@ -6,6 +6,54 @@ import random
 import string
 import os
 import json
+from loguru import logger
+import datetime
+# 配置基础日志
+log_dir = os.path.join(os.path.dirname(__file__), "logs")
+os.makedirs(log_dir, exist_ok=True)
+print(f"日志目录: {log_dir}")
+print(f"日志目录存在: {os.path.exists(log_dir)}")
+
+@pytest.fixture(autouse=True,scope="class")
+def setup_logger(request):
+    """为每个测试类设置独立的日志文件"""
+    # 打印调试信息
+    print(f"\n=== 日志配置调试 ===")
+    print(f"request.node: {request.node}")
+    print(f"request.node.fspath: {request.node.fspath}")
+    print(f"request.node.fspath.basename: {request.node.fspath.basename}")
+    
+    # 获取测试文件的名称
+    test_file = request.node.fspath.basename.replace(".py", "")
+    
+    # 为整个测试类生成一个时间戳
+    if not hasattr(request.cls, "_log_timestamp"):
+        request.cls._log_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = request.cls._log_timestamp
+    
+    log_file = os.path.join(log_dir, f"{test_file}_{timestamp}.log")
+    
+    print(f"测试文件名称: {test_file}")
+    print(f"时间戳: {timestamp}")
+    print(f"日志文件路径: {log_file}")
+    print(f"日志目录存在: {os.path.exists(log_dir)}")
+    
+    # 添加文件处理器，配置轮换和压缩
+    handler_id = logger.add(
+        log_file,
+        rotation="100 MB",  # 减小轮换阈值，便于测试
+        compression="zip",  # 压缩旧日志
+        level="INFO",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}"
+    )
+    
+    print(f"处理器ID: {handler_id}")
+    print(f"=== 日志配置调试结束 ===\n")
+    
+    yield
+    
+    # 测试完成后移除处理器
+    logger.remove(handler_id)
 
 # 生成随机字符串用于测试数据
 def generate_random_string(length=8):
