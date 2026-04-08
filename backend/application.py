@@ -155,34 +155,43 @@ scheduler = BackgroundScheduler()
 
 def collect_all_metrics():
     """定时任务：采集所有环境空间内节点的指标"""
+    import sys
     import signal
+    import threading
     from app.models.environment_space import EnvironmentSpace
     from app.models.node import Node
     from app.services.metric_collector import MetricCollector
     from app.models.system_metric import SystemMetric
 
     # 超时控制：25秒后强制终止
-    def timeout_handler(signum, frame):
-        raise TimeoutError("采集任务超时（超过25秒）")
+    timeout_seconds = 25
+    is_windows = sys.platform == 'win32'
 
-    # 设置超时信号
-    signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(25)  # 25秒超时
+    # 用于跨线程传递结果的容器
+    collection_result = {
+        'total_nodes': 0,
+        'success_count': 0,
+        'failed_count': 0,
+        'spaces_count': 0,
+        'error': None
+    }
 
-    with app.app_context():
+    def run_collection():
+        """执行采集任务"""
         try:
             # 获取所有激活的环境空间
             spaces = EnvironmentSpace.get_all_active()
+            collection_result['spaces_count'] = len(spaces)
             app.logger.info(f'开始采集 {len(spaces)} 个环境空间的监控指标')
 
-            total_nodes = 0
-            success_count = 0
-            failed_count = 0
+            collection_result['total_nodes'] = 0
+            collection_result['success_count'] = 0
+            collection_result['failed_count'] = 0
 
             for space in spaces:
                 # 采集该环境空间内的所有节点
                 nodes = space.nodes
-                total_nodes += len(nodes)
+                collection_result['total_nodes'] += len(nodes)
 
                 for node in nodes:
                     try:
@@ -195,28 +204,50 @@ def collect_all_metrics():
                         node_status = 'active' if metrics.get('is_connected') else 'inactive'
                         node.status = node_status
 
-                        success_count += 1
-                    except TimeoutError:
-                        app.logger.error(f'采集任务超时，停止执行')
-                        db.session.rollback()
-                        return
+                        collection_result['success_count'] += 1
                     except Exception as e:
                         app.logger.error(f'采集节点 {node.id} ({node.name}) 指标失败: {e}')
-                        failed_count += 1
+                        collection_result['failed_count'] += 1
 
             # 统一提交
             db.session.commit()
 
-            app.logger.info(f'指标采集完成: {len(spaces)} 个环境空间, {total_nodes} 个节点, 成功 {success_count}, 失败 {failed_count}')
+            app.logger.info(f'指标采集完成: {collection_result["spaces_count"]} 个环境空间, {collection_result["total_nodes"]} 个节点, 成功 {collection_result["success_count"]}, 失败 {collection_result["failed_count"]}')
 
-        except TimeoutError:
-            app.logger.error('采集任务执行超时')
-            db.session.rollback()
         except Exception as e:
             app.logger.error(f'采集任务执行失败: {e}')
+            collection_result['error'] = e
             db.session.rollback()
-        finally:
-            signal.alarm(0)  # 取消超时信号
+
+    with app.app_context():
+        try:
+            if is_windows:
+                # Windows: 使用线程+join实现超时
+                thread = threading.Thread(target=run_collection)
+                thread.start()
+                thread.join(timeout=timeout_seconds)
+
+                if thread.is_alive():
+                    # 线程仍在运行，表示超时了
+                    app.logger.error('采集任务执行超时（超过25秒）')
+                    db.session.rollback()
+            else:
+                # Unix/Linux: 使用SIGALRM信号
+                def sigalrm_handler(signum, frame):
+                    raise TimeoutError("采集任务超时（超过25秒）")
+
+                old_handler = signal.signal(signal.SIGALRM, sigalrm_handler)
+                signal.alarm(timeout_seconds)
+
+                try:
+                    run_collection()
+                finally:
+                    signal.alarm(0)
+                    signal.signal(signal.SIGALRM, old_handler)
+
+        except Exception as e:
+            app.logger.error(f'采集任务异常: {e}')
+            db.session.rollback()
 
 
 def cleanup_old_metrics():
